@@ -23,7 +23,8 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl, QPoint, QObject
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
     QFrame, QStackedWidget, QTextBrowser, QTextEdit, QGridLayout,
-    QSystemTrayIcon, QMenu, QLabel, QGraphicsOpacityEffect
+    QSystemTrayIcon, QMenu, QLabel, QGraphicsOpacityEffect,
+    QFileDialog
 )
 from PyQt6.QtGui import QFont, QKeySequence, QShortcut, QIcon, QKeyEvent, QFontMetrics, QColor, QMouseEvent, QWheelEvent, QPainter, QPen, QDesktopServices
 
@@ -34,10 +35,210 @@ from qfluentwidgets import (
     SwitchButton, Slider, ComboBox, InfoBar,
     InfoBarPosition, setTheme, Theme, setThemeColor,
     PillPushButton, SimpleCardWidget, ScrollArea, IconWidget,
-    PrimaryToolButton
+    PrimaryToolButton, MessageBoxBase
 )
 
-from core.db_config import RELAY_SERVER_URL
+DEFAULT_SERVER_URL = ""
+
+EMBEDDED_SERVER_PY = '''import asyncio
+import os
+import json
+import time
+import websockets
+
+ROOMS = {}
+CLEANUP_TASKS = {}
+
+async def broadcast_user_list(room_id):
+    if room_id not in ROOMS:
+        return
+    
+    users_data = {
+        u: {
+            "ping": data.get("ping", 0),
+            "status": "online",
+            "mic_muted": data.get("mic_muted", False),
+            "deafened": data.get("deafened", False),
+            "self_listen": data.get("self_listen", False)
+        }
+        for u, data in ROOMS[room_id]["users"].items()
+    }
+    
+    payload = json.dumps({
+        "type": "USER_LIST",
+        "room": room_id,
+        "users": users_data
+    })
+    
+    for u, data in list(ROOMS[room_id]["users"].items()):
+        try:
+            await data["ws"].send(payload)
+        except Exception:
+            pass
+
+async def schedule_room_cleanup(room_id, delay=45):
+    await asyncio.sleep(delay)
+    if room_id in ROOMS and len(ROOMS[room_id]["users"]) == 0:
+        del ROOMS[room_id]
+        print(f"[x] Комната {room_id} удалена по таймауту неактивности.")
+    if room_id in CLEANUP_TASKS:
+        del CLEANUP_TASKS[room_id]
+
+async def handler(websocket):
+    user_room = None
+    user_name = None
+    try:
+        async for message in websocket:
+            if isinstance(message, str):
+                try:
+                    data = json.loads(message)
+                    mtype = data.get("type")
+
+                    if mtype == "CHECK_ROOM":
+                        r_id = data.get("room", "").strip()
+                        exists = r_id in ROOMS
+                        await websocket.send(json.dumps({
+                            "type": "ROOM_STATUS",
+                            "room": r_id,
+                            "exists": exists
+                        }))
+
+                    elif mtype == "JOIN":
+                        r_id = data.get("room", "").strip()
+                        name = data.get("user", "").strip()
+                        pwd = data.get("password", "").strip()
+                        mic_muted = data.get("mic_muted", False)
+                        deafened = data.get("deafened", False)
+                        self_listen = data.get("self_listen", False)
+
+                        if not r_id or not name:
+                            continue
+
+                        if r_id in ROOMS:
+                            if r_id in CLEANUP_TASKS:
+                                CLEANUP_TASKS[r_id].cancel()
+                                del CLEANUP_TASKS[r_id]
+
+                            if ROOMS[r_id]["password"] and ROOMS[r_id]["password"] != pwd:
+                                await websocket.send(json.dumps({
+                                    "type": "AUTH_ERROR",
+                                    "msg": "Неверный пароль от комнаты!"
+                                }))
+                                continue
+                        else:
+                            ROOMS[r_id] = {
+                                "password": pwd,
+                                "users": {}
+                            }
+                            print(f"[*] Создана комната: {r_id}")
+
+                        user_room = r_id
+                        user_name = name
+                        
+                        ROOMS[user_room]["users"][user_name] = {
+                            "ws": websocket,
+                            "ping": 0,
+                            "mic_muted": mic_muted,
+                            "deafened": deafened,
+                            "self_listen": self_listen,
+                            "last_seen": time.time()
+                        }
+
+                        print(f"[+] {user_name} вошел в {user_room} (Всего: {len(ROOMS[user_room]['users'])})")
+                        await websocket.send(json.dumps({
+                            "type": "JOIN_OK",
+                            "room": user_room,
+                            "user": user_name
+                        }))
+                        await broadcast_user_list(user_room)
+
+                    elif mtype == "UPDATE_STATE":
+                        if user_room and user_room in ROOMS and user_name in ROOMS[user_room]["users"]:
+                            if "mic_muted" in data:
+                                ROOMS[user_room]["users"][user_name]["mic_muted"] = data["mic_muted"]
+                            if "deafened" in data:
+                                ROOMS[user_room]["users"][user_name]["deafened"] = data["deafened"]
+                            if "self_listen" in data:
+                                ROOMS[user_room]["users"][user_name]["self_listen"] = data["self_listen"]
+                            await broadcast_user_list(user_room)
+
+                    elif mtype == "PING":
+                        ts = data.get("ts", time.time())
+                        if user_room and user_room in ROOMS and user_name in ROOMS[user_room]["users"]:
+                            ROOMS[user_room]["users"][user_name]["last_seen"] = time.time()
+                        
+                        await websocket.send(json.dumps({
+                            "type": "PONG",
+                            "ts": ts
+                        }))
+
+                    elif mtype == "REPORT_PING":
+                        ping_ms = data.get("ping", 0)
+                        if user_room and user_room in ROOMS and user_name in ROOMS[user_room]["users"]:
+                            ROOMS[user_room]["users"][user_name]["ping"] = ping_ms
+                            await broadcast_user_list(user_room)
+
+                    elif mtype == "CHAT":
+                        if user_room and user_room in ROOMS:
+                            chat_payload = json.dumps({
+                                "type": "CHAT",
+                                "room": user_room,
+                                "sender": user_name,
+                                "text": data.get("text", "")
+                            })
+                            for peer_name, pdata in list(ROOMS[user_room]["users"].items()):
+                                try:
+                                    await pdata["ws"].send(chat_payload)
+                                except Exception:
+                                    pass
+
+                except Exception as ex:
+                    print(f"[!] JSON Error: {ex}")
+
+            elif isinstance(message, bytes):
+                if user_room and user_room in ROOMS:
+                    if user_name in ROOMS[user_room]["users"]:
+                        ROOMS[user_room]["users"][user_name]["last_seen"] = time.time()
+                    
+                    for peer_name, pdata in list(ROOMS[user_room]["users"].items()):
+                        if peer_name != user_name or pdata.get("self_listen", False):
+                            try:
+                                await pdata["ws"].send(message)
+                            except Exception:
+                                pass
+
+    except Exception as e:
+        print(f"[-] Отключение {user_name}: {e}")
+    finally:
+        if user_room and user_room in ROOMS:
+            if user_name in ROOMS[user_room]["users"]:
+                if ROOMS[user_room]["users"][user_name].get("ws") == websocket:
+                    del ROOMS[user_room]["users"][user_name]
+                    print(f"[-] {user_name} отключился от {user_room}")
+            
+            if not ROOMS[user_room]["users"]:
+                if user_room not in CLEANUP_TASKS:
+                    CLEANUP_TASKS[user_room] = asyncio.create_task(schedule_room_cleanup(user_room))
+            else:
+                await broadcast_user_list(user_room)
+
+async def main():
+    port = int(os.environ.get("PORT", 8765))
+    async with websockets.serve(
+        handler,
+        "0.0.0.0",
+        port,
+        ping_interval=20,
+        ping_timeout=20,
+        max_size=10 * 1024 * 1024,
+        max_queue=128
+    ):
+        print(f"[*] Wave Master Server запущен на порту {port}")
+        await asyncio.Future()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+'''
 
 # ==========================================================
 # ПУТИ К ДАННЫМ И РЕСУРСАМ (AppData / Frozen Check)
@@ -240,6 +441,7 @@ def get_windows_user():
 def load_config():
     cfg = {
         "user_name": get_windows_user(),
+        "server_url": DEFAULT_SERVER_URL,
         "mic_device": None,
         "speaker_device": None,
         "mic_boost": 1.0,
@@ -731,6 +933,72 @@ class VoiceOverlay(QWidget):
                 abs_y = geo.height() - h - 10
             self.move(abs_x, abs_y)
 
+class ServerSettingsModalDialog(MessageBoxBase):
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+
+        self.titleLabel = SubtitleLabel("Настройка сервера", self)
+        self.viewLayout.addWidget(self.titleLabel)
+
+        self.urlLabel = BodyLabel("Адрес WebSocket сервера:", self)
+        self.viewLayout.addWidget(self.urlLabel)
+
+        self.url_input = LineEdit(self)
+        self.url_input.setText(self.main_window.cfg.get("server_url", ""))
+        self.url_input.setPlaceholderText("wss://domain.com или ws://IP:8765")
+        self.viewLayout.addWidget(self.url_input)
+
+        inst_card = SimpleCardWidget(self)
+        inst_l = QVBoxLayout(inst_card)
+        inst_l.setContentsMargins(12, 10, 12, 10)
+        inst_l.setSpacing(4)
+        inst_l.addWidget(StrongBodyLabel("Инструкция по развёртыванию:", inst_card))
+        
+        info_text = (
+            "1. Сохраните файл server.py на целевой сервер.\n"
+            "2. Установите зависимость: pip install websockets\n"
+            "3. Запустите: python server.py\n"
+            "4. Введите полученный адрес подключения."
+        )
+        info_lbl = CaptionLabel(info_text, inst_card)
+        info_lbl.setWordWrap(True)
+        inst_l.addWidget(info_lbl)
+        self.viewLayout.addWidget(inst_card)
+
+        export_btn = PushButton("Экспорт server.py", self)
+        export_btn.setIcon(FluentIcon.FOLDER)
+        export_btn.clicked.connect(self.export_server_file)
+        self.viewLayout.addWidget(export_btn)
+
+        self.yesButton.setText("Сохранить")
+        self.cancelButton.setText("Отмена")
+        self.widget.setMinimumWidth(440)
+
+    def export_server_file(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить server.py", "server.py", "Python Files (*.py);;All Files (*)"
+        )
+        if file_path:
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(EMBEDDED_SERVER_PY.strip() + "\n")
+                InfoBar.success("Успешно", "Файл server.py сохранён!", duration=3000, parent=self.main_window)
+            except Exception as e:
+                InfoBar.error("Ошибка", f"Не удалось сохранить: {e}", duration=4000, parent=self.main_window)
+
+    def validate_and_apply(self):
+        new_url = self.url_input.text().strip()
+        if new_url and not (new_url.startswith("ws://") or new_url.startswith("wss://")):
+            InfoBar.error("Ошибка", "Адрес должен начинаться с ws:// или wss://", duration=3500, parent=self.main_window)
+            return False
+
+        self.main_window.cfg["server_url"] = new_url
+        save_config(self.main_window.cfg)
+        self.main_window.reconnect_websocket()
+        InfoBar.success("Сервер", "Адрес сохранён. Подключение обновлено.", duration=3000, parent=self.main_window)
+        return True
+
 class RoomInterface(QWidget):
     def __init__(self, main_window):
         super().__init__()
@@ -794,7 +1062,18 @@ class RoomInterface(QWidget):
 
         layout.addWidget(card)
         layout.addStretch()
+
+        server_cfg_btn = PushButton("Настройка сервера", self.auth_page)
+        server_cfg_btn.setIcon(FluentIcon.GLOBE)
+        server_cfg_btn.clicked.connect(self.open_server_settings)
+        layout.addWidget(server_cfg_btn)
+
         self.stack.addWidget(self.auth_page)
+
+    def open_server_settings(self):
+        modal = ServerSettingsModalDialog(self.main_window, self.main_window)
+        if modal.exec():
+            modal.validate_and_apply()
 
     def init_room_view(self):
         self.room_page = QWidget()
@@ -901,6 +1180,11 @@ class RoomInterface(QWidget):
         self.stack.addWidget(self.room_page)
 
     def check_room_status(self, text):
+        if not self.main_window.cfg.get("server_url"):
+            self.status_lbl.setText("Сначала укажите адрес сервера")
+            self.status_lbl.setStyleSheet("color: #FFA000;")
+            return
+
         r_id = text.strip()
         if len(r_id) < 3:
             self.status_lbl.setText("ID должен содержать от 3 символов")
@@ -924,6 +1208,10 @@ class RoomInterface(QWidget):
             self.action_btn.setText("Создать комнату")
 
     def join_or_create_room(self):
+        if not self.main_window.cfg.get("server_url"):
+            InfoBar.warning("Сервер не настроен", "Укажите адрес сервера внизу страницы.", duration=3500, parent=self)
+            return
+
         name = self.name_input.text().strip()
         r_id = self.room_input.text().strip()
         pwd = self.pwd_input.text().strip()
@@ -1244,7 +1532,7 @@ class SettingsInterface(QWidget):
         c2_layout.addWidget(StrongBodyLabel("Улучшенная обработка звука:", card2))
 
         self.echo_switch = SwitchButton(card2)
-        self.echo_switch.setOnText("Эхоподавление (Acoustic Echo Reduction): ВКЛ")
+        self.echo_switch.setOnText("Эхоподавление (Acouчетов): ВКЛ")
         self.echo_switch.setOffText("Эхоподавление: ВЫКЛ")
         self.echo_switch.setChecked(self.main_window.cfg.get("echo_cancellation", False))
         self.echo_switch.checkedChanged.connect(self.trigger_delayed_save)
@@ -1641,7 +1929,6 @@ class MainWindow(FluentWindow):
         self.init_signals()
         self.update_global_hotkeys()
         
-        # 30 FPS таймер подсветки
         self.glow_timer = QTimer(self)
         self.glow_timer.timeout.connect(self.update_speaking_glow_smooth)
         self.glow_timer.start(33)
@@ -1886,6 +2173,13 @@ class MainWindow(FluentWindow):
             except Exception:
                 pass
 
+    def reconnect_websocket(self):
+        if self.ws_client and self.ws_loop:
+            try:
+                asyncio.run_coroutine_threadsafe(self.ws_client.close(), self.ws_loop)
+            except Exception:
+                pass
+
     def start_persistent_server_connection(self):
         def _runner():
             self.ws_loop = asyncio.new_event_loop()
@@ -1978,10 +2272,15 @@ class MainWindow(FluentWindow):
 
     async def _persistent_ws_handler(self):
         while True:
+            current_target_url = self.cfg.get("server_url", DEFAULT_SERVER_URL).strip()
+            if not current_target_url:
+                await asyncio.sleep(2)
+                continue
+
             try:
-                self.log(f"[Server] Подключение к {RELAY_SERVER_URL}...")
+                self.log(f"[Server] Подключение к {current_target_url}...")
                 async with websockets.connect(
-                    RELAY_SERVER_URL, 
+                    current_target_url, 
                     open_timeout=45,
                     ping_interval=20,
                     ping_timeout=20,
