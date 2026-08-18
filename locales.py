@@ -1,6 +1,7 @@
 TRANSLATIONS = {
     "ru": {
         "tab_room": "Комната",
+        "tab_soundpad": "Саундпад",
         "tab_settings": "Настройки",
         "tab_logs": "Логи",
         "tab_info": "Информация",
@@ -26,56 +27,79 @@ TRANSLATIONS = {
         "status_room_free": "Комната свободна. Задайте пароль:",
         "btn_enter_room": "Войти в комнату",
         "btn_create_room": "Создать комнату",
-        "btn_join_action": "Создать / Войти",
+        "btn_join_action": "Подключиться",
         "btn_joining": "Вход...",
         "btn_server_setup": "Настройка сервера",
         "btn_leave": "Выйти",
-        "lobby_title": "Лобби: {room}",
-        "chat_placeholder": "Написать сообщение...",
+        "btn_sleep": "Сон",
+        "btn_wake": "Войти в комнату",
+        "btn_pin_on": "Закрепить: ВКЛ",
+        "btn_pin_off": "Закрепить: ВЫКЛ",
+        "reserved_lobby_title": "Комната: {room}",
+        "reserved_status_active": "В сети: {count}",
+        "lobby_title": "Комната: {room}",
+        "chat_placeholder": "Сообщение...",
         "btn_on": "ВКЛ",
         "btn_off": "ВЫКЛ",
         "btn_self_listen_on": "Слышать себя: ВКЛ",
         "btn_self_listen_off": "Слышать себя: ВЫКЛ",
+        "soundpad_select_placeholder": "Саундпад",
         "you_suffix": " (Вы)",
+        
+        # Participant Modal
+        "modal_user_title": "Участник: {user}",
+        "lbl_user_vol": "Громкость участника:",
+        "lbl_ducking_pct": "Приоритетное заглушение:",
+        
+        # Soundpad Interface
+        "soundpad_title": "Саундпад",
+        "soundpad_tx_vol": "Громкость в эфир:",
+        "soundpad_local_vol": "Громкость у себя:",
+        "soundpad_stop_hotkey": "Клавиша остановки звуков:",
+        "soundpad_interrupt_switch": "Прерывать звук при запуске нового:",
+        "btn_stop_sound": "Стоп",
+        "btn_add_sound": "Добавить звук",
+        "sound_play_btn": "Воспроизвести",
+        "sound_del_btn": "Удалить",
         
         # Server Setup Modal
         "modal_server_title": "Настройка сервера",
         "modal_server_lbl": "Адрес WebSocket сервера:",
-        "modal_server_inst_title": "Инструкция по развёртыванию:",
+        "modal_server_inst_title": "Развёртывание:",
         "modal_server_inst": (
-            "1. Сохраните файл server.py на целевой сервер.\n"
-            "2. Установите зависимость: pip install websockets\n"
-            "3. Запустите: python server.py\n"
-            "4. Введите полученный адрес подключения."
+            "1. Скопируйте server.py на ваш VPS.\n"
+            "2. pip install websockets\n"
+            "3. nohup python3 server.py > server.log 2>&1 &\n"
+            "4. Введите адрес подключения."
         ),
-        "btn_export_server": "Экспорт server.py",
         "btn_save": "Сохранить",
         "btn_cancel": "Отмена",
-        "export_success": "Файл server.py сохранён!",
-        "export_error": "Не удалось сохранить: {err}",
         "server_saved": "Адрес сохранён. Подключение обновлено.",
         "server_prefix_err": "Адрес должен начинаться с ws:// или wss://",
-        "server_not_configured": "Укажите адрес сервера внизу страницы.",
+        "server_not_configured": "Укажите адрес сервера.",
         "input_fill_err": "Заполните все поля!",
 
         # Settings Interface
-        "settings_title": "Настройки звука, эквалайзера и оверлея",
-        "group_io": "Устройства вывода и ввода:",
+        "settings_title": "Настройки звука и оверлея",
+        "group_io": "Устройства ввода и вывода:",
         "lbl_mic": "Микрофон:",
         "lbl_spk": "Динамики:",
         "lbl_mic_boost": "Усиление микрофона:",
-        "lbl_vad_gate": "Порог срабатывания микрофона (VAD Gate):",
-        "group_dsp": "Улучшенная обработка звука:",
-        "switch_echo_on": "Эхоподавление (Acoustic Echo Reduction): ВКЛ",
+        "lbl_vad_gate": "Порог активации микрофона:",
+        "group_dsp": "Обработка звука:",
+        "switch_echo_on": "Эхоподавление: ВКЛ",
         "switch_echo_off": "Эхоподавление: ВЫКЛ",
-        "switch_noise_on": "Шумоподавление (Noise Suppression): ВКЛ",
+        "switch_noise_on": "Шумоподавление: ВКЛ",
         "switch_noise_off": "Шумоподавление: ВЫКЛ",
-        "switch_agc_on": "Автоматическая регулировка усиления (Auto Gain Control): ВКЛ",
-        "switch_agc_off": "Автоматическая регулировка усиления: ВЫКЛ",
+        "switch_agc_on": "Автоусиление (AGC): ВКЛ",
+        "switch_agc_off": "Автоусиление (AGC): ВЫКЛ",
+        "group_dev": "Режим разработчика:",
+        "switch_dev_on": "Режим разработчика: ВКЛ",
+        "switch_dev_off": "Режим разработчика: ВЫКЛ",
         
         # EQ Presets
-        "group_eq": "Встроенный эквалайзер голоса:",
-        "lbl_eq_desc": "Применяется к собеседникам и при проверке своего звука",
+        "group_eq": "Эквалайзер:",
+        "lbl_eq_desc": "Профиль обработки входящего голоса",
         "eq_flat": "Стандартный (Flat)",
         "eq_crisp": "Голосовой баланс (Discord Crisp)",
         "eq_warm": "Теплый радио-голос (Warm Broadcast)",
@@ -83,54 +107,54 @@ TRANSLATIONS = {
         "eq_bass": "Бас-буст (Deep Bass)",
 
         # Overlay Options
-        "group_overlay": "Игровой оверлей участников:",
-        "switch_overlay_on": "Показывать оверлей поверх всех окон: ВКЛ",
-        "switch_overlay_off": "Оверлей: ВЫКЛ",
-        "lbl_overlay_mode": "Режим отображения оверлея:",
+        "group_overlay": "Оверлей:",
+        "switch_overlay_on": "Поверх всех окон: ВКЛ",
+        "switch_overlay_off": "Поверх всех окон: ВЫКЛ",
+        "lbl_overlay_mode": "Режим отображения:",
         "overlay_mode_none": "Без своей панели",
         "overlay_mode_self": "Со своей панелью",
         "overlay_mode_separate": "С отдельными панелями Мик/Звук",
-        "lbl_overlay_icons": "Иконки статуса в оверлее:",
-        "overlay_icons_hide": "Скрыть иконки статуса",
-        "overlay_icons_mic": "Только микрофон",
-        "overlay_icons_both": "Микрофон + Звук",
-        "lbl_overlay_scale": "Масштаб оверлея (%):",
+        "lbl_overlay_icons": "Иконки оверлея:",
+        "switch_ov_mic": "Микрофон",
+        "switch_ov_spk": "Наушники",
+        "lbl_overlay_scale": "Масштаб:",
         "lbl_overlay_x": "Позиция X (% ширины экрана):",
         "lbl_overlay_y": "Позиция Y (% высоты экрана):",
 
         # Hotkeys
-        "group_hotkeys": "Глобальные горячие клавиши (Работают везде):",
-        "lbl_hk_mic": "Микрофон (Mute):",
-        "lbl_hk_spk": "Звук (Deafen):",
+        "group_hotkeys": "Горячие клавиши (клик для очистки):",
+        "lbl_hk_mic": "Заглушить микрофон:",
+        "lbl_hk_spk": "Заглушить звук:",
         "lbl_hk_tray": "Свернуть в трей:",
         "lbl_hk_overlay": "Вкл/Выкл оверлей:",
 
         # Language
-        "group_lang": "Язык интерфейса / Interface Language:",
+        "group_lang": "Язык интерфейса / Language:",
         "lang_restart_title": "Смена языка",
         "lang_restart_msg": "Перезапустите Wave для применения языка.",
 
         # Logs Interface
-        "logs_title": "Сетевые логи и статус",
+        "logs_title": "Сетевые логи и диагностика",
         "btn_clear_logs": "Очистить логи",
 
         # Info Interface
         "info_title": "О программе",
-        "app_full_title": "Wave V1.3 by yunscryy",
+        "app_full_title": "Wave V1.4 Pro by yunscryy",
         "app_desc": (
-	    "Windows 11-style voice chat room application built\n\n"
+            "Минималистичный голосовой клиент прямого подключения с интерфейсом Windows 11 Fluent Design.\n\n"
             "Архитектура и стек технологий:\n"
-            "• Клиентская среда: Python 3.14 x64\n"
-            "• Графический стек: PyQt6, QFluentWidgets (Fluent Design System Win11)\n"
-            "• Аудио ядро: SoundDevice, NumPy (PCM16 16kHz, IIR DSP processing, VAD Gate Engine)\n"
-            "• Транспортный протокол: WebSockets (двунаправленный бинарный стриминг)\n"
+            "• Среда выполнения: Python 3.14 x64\n"
+            "• Графический интерфейс: PyQt6, QFluentWidgets (Fluent Design Win11)\n"
+            "• Аудио-движок: SoundDevice, NumPy (PCM16 16кГц, IIR DSP фильтры, VAD Engine, Soundpad Direct Stream)\n"
+            "• Сетевой транспорт: WebSockets (Дуплексный бинарный стриминг данных)\n"
             "• Системный уровень: Win32 API Hooking (User32 / Shell32)"
         ),
-        "app_version": "Версия: 1.3.0 Pro Suite",
-        "btn_github": "Репозиторий GitHub"
+        "app_version": "Версия: 1.4.8 Pro",
+        "btn_github": "GitHub репозиторий"
     },
     "en": {
         "tab_room": "Room",
+        "tab_soundpad": "Soundpad",
         "tab_settings": "Settings",
         "tab_logs": "Logs",
         "tab_info": "About",
@@ -145,9 +169,9 @@ TRANSLATIONS = {
         # Room Interface
         "auth_title": "Wave Voice",
         "auth_subtitle": "Connect to Voice Channel",
-        "placeholder_nickname": "Your nickname",
-        "placeholder_room": "Room ID (e.g. squad)",
-        "placeholder_pwd": "Room password",
+        "placeholder_nickname": "Nickname",
+        "placeholder_room": "Room ID (e.g.: squad)",
+        "placeholder_pwd": "Room Password",
         "status_enter_room": "Enter room name to check status",
         "status_room_len_err": "ID must be at least 3 characters",
         "status_checking": "Checking...",
@@ -156,56 +180,79 @@ TRANSLATIONS = {
         "status_room_free": "Room available. Set password:",
         "btn_enter_room": "Join Room",
         "btn_create_room": "Create Room",
-        "btn_join_action": "Create / Join",
+        "btn_join_action": "Connect",
         "btn_joining": "Connecting...",
         "btn_server_setup": "Server Setup",
         "btn_leave": "Leave",
-        "lobby_title": "Lobby: {room}",
-        "chat_placeholder": "Type a message...",
+        "btn_sleep": "Sleep",
+        "btn_wake": "Enter Room",
+        "btn_pin_on": "Pinned: ON",
+        "btn_pin_off": "Pinned: OFF",
+        "reserved_lobby_title": "Room: {room}",
+        "reserved_status_active": "Online: {count}",
+        "lobby_title": "Room: {room}",
+        "chat_placeholder": "Message...",
         "btn_on": "ON",
         "btn_off": "OFF",
         "btn_self_listen_on": "Self-listen: ON",
         "btn_self_listen_off": "Self-listen: OFF",
+        "soundpad_select_placeholder": "Soundpad",
         "you_suffix": " (You)",
         
+        # Participant Modal
+        "modal_user_title": "Member: {user}",
+        "lbl_user_vol": "Voice Volume:",
+        "lbl_ducking_pct": "Priority Ducking:",
+        
+        # Soundpad Interface
+        "soundpad_title": "Soundpad",
+        "soundpad_tx_vol": "Broadcast Volume:",
+        "soundpad_local_vol": "Local Volume:",
+        "soundpad_stop_hotkey": "Stop sounds hotkey:",
+        "soundpad_interrupt_switch": "Interrupt previous sound on new play:",
+        "btn_stop_sound": "Stop",
+        "btn_add_sound": "Add Sound",
+        "sound_play_btn": "Play",
+        "sound_del_btn": "Delete",
+
         # Server Setup Modal
         "modal_server_title": "Server Configuration",
         "modal_server_lbl": "WebSocket Server Address:",
         "modal_server_inst_title": "Deployment Instructions:",
         "modal_server_inst": (
-            "1. Save server.py to your target server.\n"
-            "2. Install dependency: pip install websockets\n"
-            "3. Run: python server.py\n"
-            "4. Enter your connection URL above."
+            "1. Upload server.py to your VPS.\n"
+            "2. pip install websockets\n"
+            "3. nohup python3 server.py > server.log 2>&1 &\n"
+            "4. Enter connection URL."
         ),
-        "btn_export_server": "Export server.py",
         "btn_save": "Save",
         "btn_cancel": "Cancel",
-        "export_success": "server.py saved successfully!",
-        "export_error": "Save failed: {err}",
-        "server_saved": "Server address saved. Connection updated.",
+        "server_saved": "Server address saved.",
         "server_prefix_err": "URL must start with ws:// or wss://",
-        "server_not_configured": "Specify server address at the bottom first.",
-        "input_fill_err": "Please fill in all fields!",
+        "server_not_configured": "Specify server address.",
+        "input_fill_err": "Please fill all fields!",
 
         # Settings Interface
-        "settings_title": "Audio, Equalizer & Overlay Settings",
-        "group_io": "Input & Output Audio Devices:",
+        "settings_title": "Audio & Overlay Settings",
+        "group_io": "Audio Devices:",
         "lbl_mic": "Microphone:",
         "lbl_spk": "Speakers:",
         "lbl_mic_boost": "Microphone Boost:",
-        "lbl_vad_gate": "Noise Gate Threshold (VAD Gate):",
-        "group_dsp": "Advanced DSP Audio Processing:",
-        "switch_echo_on": "Echo Cancellation (Acoustic Echo Reduction): ON",
+        "lbl_vad_gate": "Activation Threshold:",
+        "group_dsp": "Audio Processing:",
+        "switch_echo_on": "Echo Cancellation: ON",
         "switch_echo_off": "Echo Cancellation: OFF",
         "switch_noise_on": "Noise Suppression: ON",
         "switch_noise_off": "Noise Suppression: OFF",
-        "switch_agc_on": "Auto Gain Control (AGC): ON",
+        "switch_agc_on": "Auto Gain Control: ON",
         "switch_agc_off": "Auto Gain Control: OFF",
+        "group_dev": "Developer Mode:",
+        "switch_dev_on": "Developer Mode: ON",
+        "switch_dev_off": "Developer Mode: OFF",
         
         # EQ Presets
-        "group_eq": "Integrated Voice Equalizer:",
-        "lbl_eq_desc": "Applies to incoming peers and self-listening loopback",
+        "group_eq": "Equalizer:",
+        "lbl_eq_desc": "Voice incoming processing profile",
         "eq_flat": "Standard (Flat)",
         "eq_crisp": "Voice Balance (Discord Crisp)",
         "eq_warm": "Warm Radio (Warm Broadcast)",
@@ -213,23 +260,22 @@ TRANSLATIONS = {
         "eq_bass": "Bass Boost (Deep Bass)",
 
         # Overlay Options
-        "group_overlay": "In-Game Participants Overlay:",
-        "switch_overlay_on": "Always-on-top Overlay: ON",
-        "switch_overlay_off": "Overlay: OFF",
-        "lbl_overlay_mode": "Overlay Layout Mode:",
-        "overlay_mode_none": "Without personal panel",
-        "overlay_mode_self": "With personal panel",
-        "overlay_mode_separate": "With separate Mic/Audio panels",
-        "lbl_overlay_icons": "Status Icons in Overlay:",
-        "overlay_icons_hide": "Hide status icons",
-        "overlay_icons_mic": "Microphone only",
-        "overlay_icons_both": "Microphone + Audio",
-        "lbl_overlay_scale": "Overlay Scale (%):",
+        "group_overlay": "Overlay:",
+        "switch_overlay_on": "Always-on-top: ON",
+        "switch_overlay_off": "Always-on-top: OFF",
+        "lbl_overlay_mode": "Display Mode:",
+        "overlay_mode_none": "Without self panel",
+        "overlay_mode_self": "With self panel",
+        "overlay_mode_separate": "With separate Mic/Audio",
+        "lbl_overlay_icons": "Overlay Icons:",
+        "switch_ov_mic": "Microphone",
+        "switch_ov_spk": "Headphones",
+        "lbl_overlay_scale": "Scale:",
         "lbl_overlay_x": "Position X (% screen width):",
         "lbl_overlay_y": "Position Y (% screen height):",
 
         # Hotkeys
-        "group_hotkeys": "Global Hotkeys (Win32 Hook):",
+        "group_hotkeys": "Global Hotkeys (Click to clear):",
         "lbl_hk_mic": "Mute Microphone:",
         "lbl_hk_spk": "Deafen Audio:",
         "lbl_hk_tray": "Minimize to Tray:",
@@ -246,17 +292,17 @@ TRANSLATIONS = {
 
         # Info Interface
         "info_title": "About Wave",
-        "app_full_title": "Wave V1.3 by yunscryy",
+        "app_full_title": "Wave V1.4 Pro by yunscryy",
         "app_desc": (
-	    "Windows 11-style voice chat room application built\n\n"
+            "Windows 11 Fluent Design voice client.\n\n"
             "Architecture & Technology Stack:\n"
             "• Runtime Environment: Python 3.14 x64\n"
             "• UI Framework: PyQt6, QFluentWidgets (Fluent Design Win11)\n"
-            "• Audio DSP Engine: SoundDevice, NumPy (PCM16 16kHz, IIR DSP processing, VAD Gate Engine)\n"
+            "• Audio DSP Engine: SoundDevice, NumPy (PCM16 16kHz, IIR DSP processing, VAD Engine, Soundpad Direct Stream)\n"
             "• Transport: WebSockets (Full-duplex binary streaming)\n"
             "• System Level: Win32 API Hooking (User32 / Shell32)"
         ),
-        "app_version": "Version: 1.3.0 Pro Suite",
+        "app_version": "Version: 1.4.8 Pro",
         "btn_github": "GitHub Repository"
     }
 }

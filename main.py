@@ -6,254 +6,64 @@ import getpass
 import json
 import threading
 import time
-import re
-import winsound
 import asyncio
 import websockets
 import sounddevice as sd
 import numpy as np
 
 try:
-    myappid = 'yunscryy.wave.voiceclient.7.0'
+    import soundfile as sf
+except ImportError:
+    sf = None
+
+try:
+    ctypes.windll.winmm.timeBeginPeriod(1)
+except Exception:
+    pass
+
+try:
+    myappid = 'yunscryy.wave.voiceclient.1.4.9'
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
 
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl, QPoint, QObject
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl, QObject, QMimeData
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
     QFrame, QStackedWidget, QTextBrowser, QTextEdit, QGridLayout,
-    QSystemTrayIcon, QMenu, QLabel, QGraphicsOpacityEffect,
-    QFileDialog
+    QSystemTrayIcon, QMenu, QLabel, QFileDialog
 )
-from PyQt6.QtGui import QFont, QKeySequence, QShortcut, QIcon, QKeyEvent, QFontMetrics, QColor, QMouseEvent, QWheelEvent, QPainter, QPen, QDesktopServices
+from PyQt6.QtGui import (
+    QFont, QKeySequence, QIcon, QKeyEvent, QColor, 
+    QMouseEvent, QPainter, QPen, QDesktopServices, QDrag, QFontMetrics
+)
 
 from qfluentwidgets import (
-    FluentWindow, NavigationItemPosition,
-    FluentIcon, SubtitleLabel, TitleLabel, BodyLabel, CaptionLabel, StrongBodyLabel,
+    FluentWindow, NavigationItemPosition, FluentIcon, 
+    SubtitleLabel, TitleLabel, BodyLabel, CaptionLabel, StrongBodyLabel,
     LineEdit, PasswordLineEdit, PrimaryPushButton, PushButton,
-    SwitchButton, Slider, ComboBox, InfoBar,
-    InfoBarPosition, setTheme, Theme, setThemeColor,
-    PillPushButton, SimpleCardWidget, ScrollArea, IconWidget,
-    PrimaryToolButton, MessageBoxBase
+    SwitchButton, Slider, ComboBox, InfoBar, InfoBarPosition, 
+    setTheme, Theme, setThemeColor, PillPushButton, SimpleCardWidget, 
+    ScrollArea, IconWidget, PrimaryToolButton, MessageBoxBase, ToolButton
 )
 
 from locales import TRANSLATIONS
 
 DEFAULT_SERVER_URL = ""
 
-EMBEDDED_SERVER_PY = '''import asyncio
-import os
-import json
-import time
-import websockets
+APPDATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "WaveVoice")
+CACHE_DIR = os.path.join(APPDATA_DIR, "sound_cache")
+os.makedirs(APPDATA_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
 
-ROOMS = {}
-CLEANUP_TASKS = {}
+CONFIG_PATH = os.path.join(APPDATA_DIR, "settings.json")
+SOUNDPAD_CONFIG_PATH = os.path.join(APPDATA_DIR, "soundpad.json")
 
-async def broadcast_user_list(room_id):
-    if room_id not in ROOMS:
-        return
-    
-    users_data = {
-        u: {
-            "ping": data.get("ping", 0),
-            "status": "online",
-            "mic_muted": data.get("mic_muted", False),
-            "deafened": data.get("deafened", False),
-            "self_listen": data.get("self_listen", False)
-        }
-        for u, data in ROOMS[room_id]["users"].items()
-    }
-    
-    payload = json.dumps({
-        "type": "USER_LIST",
-        "room": room_id,
-        "users": users_data
-    })
-    
-    for u, data in list(ROOMS[room_id]["users"].items()):
-        try:
-            await data["ws"].send(payload)
-        except Exception:
-            pass
-
-async def schedule_room_cleanup(room_id, delay=45):
-    await asyncio.sleep(delay)
-    if room_id in ROOMS and len(ROOMS[room_id]["users"]) == 0:
-        del ROOMS[room_id]
-        print(f"[x] Room {room_id} deleted on inactivity timeout.")
-    if room_id in CLEANUP_TASKS:
-        del CLEANUP_TASKS[room_id]
-
-async def handler(websocket):
-    user_room = None
-    user_name = None
-    try:
-        async for message in websocket:
-            if isinstance(message, str):
-                try:
-                    data = json.loads(message)
-                    mtype = data.get("type")
-
-                    if mtype == "CHECK_ROOM":
-                        r_id = data.get("room", "").strip()
-                        exists = r_id in ROOMS
-                        await websocket.send(json.dumps({
-                            "type": "ROOM_STATUS",
-                            "room": r_id,
-                            "exists": exists
-                        }))
-
-                    elif mtype == "JOIN":
-                        r_id = data.get("room", "").strip()
-                        name = data.get("user", "").strip()
-                        pwd = data.get("password", "").strip()
-                        mic_muted = data.get("mic_muted", False)
-                        deafened = data.get("deafened", False)
-                        self_listen = data.get("self_listen", False)
-
-                        if not r_id or not name:
-                            continue
-
-                        if r_id in ROOMS:
-                            if r_id in CLEANUP_TASKS:
-                                CLEANUP_TASKS[r_id].cancel()
-                                del CLEANUP_TASKS[r_id]
-
-                            if ROOMS[r_id]["password"] and ROOMS[r_id]["password"] != pwd:
-                                await websocket.send(json.dumps({
-                                    "type": "AUTH_ERROR",
-                                    "msg": "Invalid room password!"
-                                }))
-                                continue
-                        else:
-                            ROOMS[r_id] = {
-                                "password": pwd,
-                                "users": {}
-                            }
-                            print(f"[*] Created room: {r_id}")
-
-                        user_room = r_id
-                        user_name = name
-                        
-                        ROOMS[user_room]["users"][user_name] = {
-                            "ws": websocket,
-                            "ping": 0,
-                            "mic_muted": mic_muted,
-                            "deafened": deafened,
-                            "self_listen": self_listen,
-                            "last_seen": time.time()
-                        }
-
-                        print(f"[+] {user_name} joined {user_room} (Total: {len(ROOMS[user_room]['users'])})")
-                        await websocket.send(json.dumps({
-                            "type": "JOIN_OK",
-                            "room": user_room,
-                            "user": user_name
-                        }))
-                        await broadcast_user_list(user_room)
-
-                    elif mtype == "UPDATE_STATE":
-                        if user_room and user_room in ROOMS and user_name in ROOMS[user_room]["users"]:
-                            if "mic_muted" in data:
-                                ROOMS[user_room]["users"][user_name]["mic_muted"] = data["mic_muted"]
-                            if "deafened" in data:
-                                ROOMS[user_room]["users"][user_name]["deafened"] = data["deafened"]
-                            if "self_listen" in data:
-                                ROOMS[user_room]["users"][user_name]["self_listen"] = data["self_listen"]
-                            await broadcast_user_list(user_room)
-
-                    elif mtype == "PING":
-                        ts = data.get("ts", time.time())
-                        if user_room and user_room in ROOMS and user_name in ROOMS[user_room]["users"]:
-                            ROOMS[user_room]["users"][user_name]["last_seen"] = time.time()
-                        
-                        await websocket.send(json.dumps({
-                            "type": "PONG",
-                            "ts": ts
-                        }))
-
-                    elif mtype == "REPORT_PING":
-                        ping_ms = data.get("ping", 0)
-                        if user_room and user_room in ROOMS and user_name in ROOMS[user_room]["users"]:
-                            ROOMS[user_room]["users"][user_name]["ping"] = ping_ms
-                            await broadcast_user_list(user_room)
-
-                    elif mtype == "CHAT":
-                        if user_room and user_room in ROOMS:
-                            chat_payload = json.dumps({
-                                "type": "CHAT",
-                                "room": user_room,
-                                "sender": user_name,
-                                "text": data.get("text", "")
-                            })
-                            for peer_name, pdata in list(ROOMS[user_room]["users"].items()):
-                                try:
-                                    await pdata["ws"].send(chat_payload)
-                                except Exception:
-                                    pass
-
-                except Exception as ex:
-                    print(f"[!] JSON Error: {ex}")
-
-            elif isinstance(message, bytes):
-                if user_room and user_room in ROOMS:
-                    if user_name in ROOMS[user_room]["users"]:
-                        ROOMS[user_room]["users"][user_name]["last_seen"] = time.time()
-                    
-                    for peer_name, pdata in list(ROOMS[user_room]["users"].items()):
-                        if peer_name != user_name or pdata.get("self_listen", False):
-                            try:
-                                await pdata["ws"].send(message)
-                            except Exception:
-                                pass
-
-    except Exception as e:
-        print(f"[-] Disconnected {user_name}: {e}")
-    finally:
-        if user_room and user_room in ROOMS:
-            if user_name in ROOMS[user_room]["users"]:
-                if ROOMS[user_room]["users"][user_name].get("ws") == websocket:
-                    del ROOMS[user_room]["users"][user_name]
-                    print(f"[-] {user_name} disconnected from {user_room}")
-            
-            if not ROOMS[user_room]["users"]:
-                if user_room not in CLEANUP_TASKS:
-                    CLEANUP_TASKS[user_room] = asyncio.create_task(schedule_room_cleanup(user_room))
-            else:
-                await broadcast_user_list(user_room)
-
-async def main():
-    port = int(os.environ.get("PORT", 8765))
-    async with websockets.serve(
-        handler,
-        "0.0.0.0",
-        port,
-        ping_interval=20,
-        ping_timeout=20,
-        max_size=10 * 1024 * 1024,
-        max_queue=128
-    ):
-        print(f"[*] Wave Master Server running on port {port}")
-        await asyncio.Future()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-'''
-
-# ==========================================================
-# ПУТИ К ДАННЫМ И РЕСУРСАМ (AppData / Frozen Check)
-# ==========================================================
 if getattr(sys, 'frozen', False):
-    BUNDLE_DIR = sys._MEIPASS
+    BUNDLE_DIR = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
 else:
     BUNDLE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-APPDATA_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Wave")
-os.makedirs(APPDATA_DIR, exist_ok=True)
-
-CONFIG_PATH = os.path.join(APPDATA_DIR, "settings.json")
 ASSETS_DIR = os.path.join(BUNDLE_DIR, "assets")
 ICON_PATH_ICO = os.path.join(ASSETS_DIR, "icon.ico")
 ICON_PATH_PNG = os.path.join(ASSETS_DIR, "icon.png")
@@ -275,13 +85,8 @@ OVERLAY_MODES = [
     "overlay_mode_separate"
 ]
 
-OVERLAY_ICONS_MODES = [
-    "overlay_icons_hide",
-    "overlay_icons_mic",
-    "overlay_icons_both"
-]
-
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
 
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
@@ -338,6 +143,75 @@ def parse_hotkey_string(combo_str):
     
     return mod, key_code
 
+def convert_and_cache_audio(src_path):
+    try:
+        import wave
+        cache_name = f"snd_{abs(hash(src_path))}.wav"
+        dest_wav = os.path.join(CACHE_DIR, cache_name)
+
+        if os.path.exists(dest_wav) and os.path.getsize(dest_wav) > 100:
+            return dest_wav
+
+        data = None
+        sr = SAMPLE_RATE
+
+        if sf is not None:
+            try:
+                data, sr = sf.read(src_path, dtype='float32')
+                if data.ndim > 1:
+                    data = data.mean(axis=1)
+            except Exception:
+                data = None
+
+        if data is None and src_path.lower().endswith(".wav"):
+            try:
+                with wave.open(src_path, 'rb') as wf:
+                    sr = wf.getframerate()
+                    ch = wf.getnchannels()
+                    sw = wf.getsampwidth()
+                    raw = wf.readframes(wf.getnframes())
+                    if sw == 2:
+                        data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                    elif sw == 1:
+                        data = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128) / 128.0
+                    if ch > 1 and data is not None:
+                        data = data.reshape(-1, ch).mean(axis=1)
+            except Exception:
+                data = None
+
+        if data is None:
+            return None
+
+        if sr != SAMPLE_RATE:
+            data = np.interp(
+                np.linspace(0, len(data), int(len(data) * SAMPLE_RATE / sr)),
+                np.arange(len(data)),
+                data
+            ).astype(np.float32)
+
+        data = np.clip(data, -1.0, 1.0)
+        pcm16_bytes = (data * 32767).astype(np.int16).tobytes()
+
+        with wave.open(dest_wav, 'wb') as out_wf:
+            out_wf.setnchannels(1)
+            out_wf.setsampwidth(2)
+            out_wf.setframerate(SAMPLE_RATE)
+            out_wf.writeframes(pcm16_bytes)
+
+        return dest_wav
+    except Exception as e:
+        print(f"[Convert Error] {e}")
+        return None
+
+def read_pcm_from_cached_wav(wav_path):
+    try:
+        import wave
+        with wave.open(wav_path, 'rb') as wf:
+            raw = wf.readframes(wf.getnframes())
+            return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    except Exception:
+        return None
+
 class GlobalHotkeyManager(QObject):
     hotkey_triggered = pyqtSignal(str)
 
@@ -355,15 +229,16 @@ class GlobalHotkeyManager(QObject):
             self.current_hotkeys.clear()
             hid = 1
             for action, combo in hotkeys_dict.items():
-                mod, vk = parse_hotkey_string(combo)
-                if mod is not None and vk is not None:
-                    self.current_hotkeys[hid] = (action, mod, vk)
-                    hid += 1
+                if combo:
+                    mod, vk = parse_hotkey_string(combo)
+                    if mod is not None and vk is not None:
+                        self.current_hotkeys[hid] = (action, mod, vk)
+                        hid += 1
         if self.thread_id:
             user32.PostThreadMessageW(self.thread_id, WM_UPDATE_HOTKEYS, 0, 0)
 
     def _msg_loop(self):
-        self.thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+        self.thread_id = kernel32.GetCurrentThreadId()
         registered_ids = []
 
         def _unregister_all():
@@ -445,6 +320,7 @@ def load_config():
         "user_name": get_windows_user(),
         "server_url": DEFAULT_SERVER_URL,
         "language": "ru",
+        "dev_mode": False,
         "mic_device": None,
         "speaker_device": None,
         "mic_boost": 1.0,
@@ -455,70 +331,64 @@ def load_config():
         "equalizer_preset": "eq_flat",
         "overlay_enabled": False,
         "overlay_mode": "overlay_mode_none",
-        "overlay_icons_mode": "overlay_icons_mic",
+        "ov_icon_mic": True,
+        "ov_icon_spk": True,
         "overlay_x_pct": 3.0,
         "overlay_y_pct": 3.0,
         "overlay_scale": 100,
-        "theme": "Dark",
-        "theme_color": None,
-        "bind_mute_mic": "Ctrl+M",
-        "bind_deafen": "Ctrl+D",
-        "bind_tray": "Ctrl+H",
-        "bind_overlay": "Ctrl+O"
+        "bind_mute_mic": "",
+        "bind_deafen": "",
+        "bind_tray": "",
+        "bind_overlay": "",
+        "bind_soundpad_stop": "",
+        "soundpad_interrupt": True,
+        "pinned_room": None,
+        "pinned_pwd": "",
+        "soundpad_tx_vol": 1.0,
+        "soundpad_local_vol": 1.0,
+        "peer_settings": {}
     }
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-                if loaded.get("user_name"):
-                    cfg["user_name"] = loaded["user_name"]
                 for k, v in loaded.items():
-                    if k != "user_name" or v is not None:
-                        cfg[k] = v
+                    cfg[k] = v
         except Exception:
             pass
-            
-    # Конвертация устаревших русских строк конфигурации в ключи
-    eq_mig = {
-        "Стандартный (Flat)": "eq_flat",
-        "Голосовой баланс (Discord Crisp)": "eq_crisp",
-        "Теплый радио-голос (Warm Broadcast)": "eq_warm",
-        "Игровой фокус (Gamer Clarity)": "eq_clarity",
-        "Бас-буст (Deep Bass)": "eq_bass"
-    }
-    if cfg.get("equalizer_preset") in eq_mig:
-        cfg["equalizer_preset"] = eq_mig[cfg["equalizer_preset"]]
-
-    mode_mig = {
-        "Без своей панели": "overlay_mode_none",
-        "Со своей панелью": "overlay_mode_self",
-        "С отдельными панелями Мик/Звук": "overlay_mode_separate"
-    }
-    if cfg.get("overlay_mode") in mode_mig:
-        cfg["overlay_mode"] = mode_mig[cfg["overlay_mode"]]
-
-    icons_mig = {
-        "Скрыть иконки статуса": "overlay_icons_hide",
-        "Только микрофон": "overlay_icons_mic",
-        "Микрофон + Звук": "overlay_icons_both"
-    }
-    if cfg.get("overlay_icons_mode") in icons_mig:
-        cfg["overlay_icons_mode"] = icons_mig[cfg["overlay_icons_mode"]]
 
     if not cfg.get("user_name"):
         cfg["user_name"] = get_windows_user()
         
-    if "overlay_x" in cfg and "overlay_x_pct" not in cfg:
-        cfg["overlay_x_pct"] = min(100.0, max(0.0, (cfg["overlay_x"] / 1920.0) * 100.0))
-    if "overlay_y" in cfg and "overlay_y_pct" not in cfg:
-        cfg["overlay_y_pct"] = min(100.0, max(0.0, (cfg["overlay_y"] / 1080.0) * 100.0))
-
     return cfg
 
 def save_config(cfg):
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
+
+def load_soundpad():
+    if os.path.exists(SOUNDPAD_CONFIG_PATH):
+        try:
+            with open(SOUNDPAD_CONFIG_PATH, "r", encoding="utf-8") as f:
+                items = json.load(f)
+                valid = []
+                for it in items:
+                    p = it.get("cached_path") or it.get("path") or it.get("orig_path")
+                    if p:
+                        it["cached_path"] = p
+                        valid.append(it)
+                return valid
+        except Exception:
+            pass
+    return []
+
+def save_soundpad(data):
+    try:
+        with open(SOUNDPAD_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception:
         pass
 
@@ -597,46 +467,6 @@ class StatusIconWidget(QWidget):
             h = self.height()
             painter.drawLine(3, 3, w - 3, h - 3)
 
-class DraggableVolumeIcon(IconWidget):
-    volume_changed = pyqtSignal(float)
-
-    def __init__(self, icon, parent=None, initial_vol=1.0):
-        super().__init__(parent)
-        self.setIcon(icon)
-        self.setFixedSize(18, 18)
-        self.setCursor(Qt.CursorShape.SizeVerCursor)
-        self.current_vol = initial_vol
-        self.dragging = False
-        self.last_y = 0
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.dragging = True
-            self.last_y = event.globalPosition().y()
-            event.accept()
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if self.dragging:
-            cur_y = event.globalPosition().y()
-            delta = self.last_y - cur_y
-            self.last_y = cur_y
-            step = delta * 0.015
-            self.current_vol = max(0.0, min(2.0, self.current_vol + step))
-            self.volume_changed.emit(self.current_vol)
-            event.accept()
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.dragging = False
-            event.accept()
-
-    def wheelEvent(self, event: QWheelEvent):
-        delta = event.angleDelta().y()
-        step = 0.05 if delta > 0 else -0.05
-        self.current_vol = max(0.0, min(2.0, self.current_vol + step))
-        self.volume_changed.emit(self.current_vol)
-        event.accept()
-
 class KeyRecorderEdit(LineEdit):
     keySequenceRecorded = pyqtSignal(str)
 
@@ -644,6 +474,11 @@ class KeyRecorderEdit(LineEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setPlaceholderText("...")
+
+    def mousePressEvent(self, event: QMouseEvent):
+        self.clear()
+        self.keySequenceRecorded.emit("")
+        event.accept()
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
@@ -670,6 +505,52 @@ class KeyRecorderEdit(LineEdit):
             self.setText(combo)
             self.keySequenceRecorded.emit(combo)
         event.accept()
+
+class UserSettingsModal(MessageBoxBase):
+    def __init__(self, username, main_window, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.main_window = main_window
+
+        user_cfg = self.main_window.cfg["peer_settings"].get(username, {"vol": 1.0, "ducking": 0})
+        
+        self.titleLabel = SubtitleLabel(self.main_window.tr("modal_user_title").format(user=username), self)
+        self.viewLayout.addWidget(self.titleLabel)
+
+        self.viewLayout.addWidget(BodyLabel(self.main_window.tr("lbl_user_vol"), self))
+        self.vol_lbl = CaptionLabel(f"{int(user_cfg.get('vol', 1.0) * 100)}%", self)
+        self.vol_slider = Slider(Qt.Orientation.Horizontal, self)
+        self.vol_slider.setRange(0, 200)
+        self.vol_slider.setValue(int(user_cfg.get('vol', 1.0) * 100))
+        self.vol_slider.valueChanged.connect(lambda v: self.vol_lbl.setText(f"{v}%"))
+        
+        v_box = QHBoxLayout()
+        v_box.addWidget(self.vol_slider)
+        v_box.addWidget(self.vol_lbl)
+        self.viewLayout.addLayout(v_box)
+
+        self.viewLayout.addWidget(BodyLabel(self.main_window.tr("lbl_ducking_pct"), self))
+        self.duck_lbl = CaptionLabel(f"{user_cfg.get('ducking', 0)}%", self)
+        self.duck_slider = Slider(Qt.Orientation.Horizontal, self)
+        self.duck_slider.setRange(0, 75)
+        self.duck_slider.setValue(user_cfg.get('ducking', 0))
+        self.duck_slider.valueChanged.connect(lambda v: self.duck_lbl.setText(f"{v}%"))
+
+        d_box = QHBoxLayout()
+        d_box.addWidget(self.duck_slider)
+        d_box.addWidget(self.duck_lbl)
+        self.viewLayout.addLayout(d_box)
+
+        self.yesButton.setText(self.main_window.tr("btn_save"))
+        self.cancelButton.setText(self.main_window.tr("btn_cancel"))
+        self.widget.setMinimumWidth(380)
+
+    def apply_settings(self):
+        self.main_window.cfg["peer_settings"][self.username] = {
+            "vol": self.vol_slider.value() / 100.0,
+            "ducking": self.duck_slider.value()
+        }
+        save_config(self.main_window.cfg)
 
 class VoiceOverlay(QWidget):
     def __init__(self, main_window):
@@ -826,10 +707,14 @@ class VoiceOverlay(QWidget):
         self.raw_user_names.clear()
 
         overlay_mode = self.main_window.cfg.get("overlay_mode", "overlay_mode_none")
-        icons_mode = self.main_window.cfg.get("overlay_icons_mode", "overlay_icons_mic")
         include_self = (overlay_mode == "overlay_mode_self")
 
-        users_items = list(users_dict.items())
+        show_mic = self.main_window.cfg.get("ov_icon_mic", True)
+        show_spk = self.main_window.cfg.get("ov_icon_spk", True)
+
+        ordered_users = self.main_window.user_order if self.main_window.user_order else list(users_dict.keys())
+        users_items = [(u, users_dict[u]) for u in ordered_users if u in users_dict]
+
         if self.is_bottom_half():
             users_items = list(reversed(users_items))
 
@@ -871,17 +756,18 @@ class VoiceOverlay(QWidget):
             dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
             r_layout.addWidget(dot)
 
-            mic_icon = None
-            spk_icon = None
             mic_muted = self.main_window.state["mic_muted"] if is_me else udata.get("mic_muted", False)
             deafened = self.main_window.state["deafened"] if is_me else udata.get("deafened", False)
 
-            if icons_mode in ("overlay_icons_mic", "overlay_icons_both"):
+            mic_icon = None
+            spk_icon = None
+
+            if show_mic:
                 mic_icon = StatusIconWidget(FluentIcon.MICROPHONE, card, is_slashed=mic_muted, slash_color="#FFFFFF")
                 mic_icon.setFixedSize(14, 14)
                 r_layout.addWidget(mic_icon)
 
-            if icons_mode == "overlay_icons_both":
+            if show_spk:
                 spk_icon = StatusIconWidget(FluentIcon.HEADPHONE, card, is_slashed=deafened, slash_color="#FFFFFF")
                 spk_icon.setFixedSize(14, 14)
                 r_layout.addWidget(spk_icon)
@@ -898,15 +784,12 @@ class VoiceOverlay(QWidget):
             r, g, b = rgb_tuple
             
             if alpha > 0.01:
-                b_r = int(255 * (1.0 - alpha) + r * alpha)
-                b_g = int(255 * (1.0 - alpha) + g * alpha)
-                b_b = int(255 * (1.0 - alpha) + b * alpha)
-                border_a = 0.12 * (1.0 - alpha) + 1.0 * alpha
-                border_width = 1.5 + (0.5 * alpha)
+                border_a = min(1.0, 0.40 + 0.60 * alpha)
+                border_width = 1.5 + (0.8 * alpha)
                 card.setStyleSheet(f"""
                     QFrame.OverlayUserCard {{
                         background-color: rgba(26, 26, 26, 0.86);
-                        border: {border_width:.1f}px solid rgba({b_r}, {b_g}, {b_b}, {border_a:.2f});
+                        border: {border_width:.1f}px solid rgba({r}, {g}, {b}, {border_a:.2f});
                         border-radius: 9px;
                     }}
                 """)
@@ -978,7 +861,7 @@ class ServerSettingsModalDialog(MessageBoxBase):
 
         self.url_input = LineEdit(self)
         self.url_input.setText(self.main_window.cfg.get("server_url", ""))
-        self.url_input.setPlaceholderText("wss://domain.com / ws://IP:8765")
+        self.url_input.setPlaceholderText("ws://IP:8765")
         self.viewLayout.addWidget(self.url_input)
 
         inst_card = SimpleCardWidget(self)
@@ -992,26 +875,9 @@ class ServerSettingsModalDialog(MessageBoxBase):
         inst_l.addWidget(info_lbl)
         self.viewLayout.addWidget(inst_card)
 
-        export_btn = PushButton(self.main_window.tr("btn_export_server"), self)
-        export_btn.setIcon(FluentIcon.FOLDER)
-        export_btn.clicked.connect(self.export_server_file)
-        self.viewLayout.addWidget(export_btn)
-
         self.yesButton.setText(self.main_window.tr("btn_save"))
         self.cancelButton.setText(self.main_window.tr("btn_cancel"))
         self.widget.setMinimumWidth(440)
-
-    def export_server_file(self):
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save server.py", "server.py", "Python Files (*.py);;All Files (*)"
-        )
-        if file_path:
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(EMBEDDED_SERVER_PY.strip() + "\n")
-                InfoBar.success("OK", self.main_window.tr("export_success"), duration=3000, parent=self.main_window)
-            except Exception as e:
-                InfoBar.error("Error", self.main_window.tr("export_error").format(err=e), duration=4000, parent=self.main_window)
 
     def validate_and_apply(self):
         new_url = self.url_input.text().strip()
@@ -1024,6 +890,52 @@ class ServerSettingsModalDialog(MessageBoxBase):
         self.main_window.reconnect_websocket()
         InfoBar.success("Server", self.main_window.tr("server_saved"), duration=3000, parent=self.main_window)
         return True
+
+class DraggableUserCard(SimpleCardWidget):
+    def __init__(self, username, room_interface, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.room_interface = room_interface
+        self.setObjectName(f"user_card_{username}")
+        self.setStyleSheet("SimpleCardWidget { border: 2px solid transparent; border-radius: 8px; background-color: rgba(255, 255, 255, 0.04); }")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.drag_start_pos = None
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_start_pos = event.pos()
+        event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.drag_start_pos and (event.pos() - self.drag_start_pos).manhattanLength() > 8:
+            if self.username != self.room_interface.main_window.state["user"]:
+                drag = QDrag(self)
+                mime = QMimeData()
+                mime.setText(self.username)
+                drag.setMimeData(mime)
+                drag.exec(Qt.DropAction.MoveAction)
+                self.drag_start_pos = None
+        event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if self.drag_start_pos is not None:
+            if self.username != self.room_interface.main_window.state["user"]:
+                modal = UserSettingsModal(self.username, self.room_interface.main_window, self.room_interface.main_window)
+                if modal.exec():
+                    modal.apply_settings()
+        self.drag_start_pos = None
+        event.accept()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text() != self.room_interface.main_window.state["user"]:
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        src_user = event.mimeData().text()
+        dest_user = self.username
+        if src_user != dest_user:
+            self.room_interface.reorder_users_drag(src_user, dest_user)
+        event.acceptProposedAction()
 
 class RoomInterface(QWidget):
     def __init__(self, main_window):
@@ -1040,11 +952,17 @@ class RoomInterface(QWidget):
         self.known_users = set()
 
         self.stack = QStackedWidget(self)
-        self.layout.addWidget(self.stack)
+        self.layout.addWidget(self.stack, 1)
 
         self.init_auth_view()
+        self.init_reserved_lobby_view()
         self.init_room_view()
-        self.stack.setCurrentIndex(0)
+        self.init_permanent_control_bar()
+
+        if self.main_window.cfg.get("pinned_room"):
+            self.show_reserved_lobby(self.main_window.cfg.get("pinned_room"), {})
+        else:
+            self.stack.setCurrentIndex(0)
 
     def init_auth_view(self):
         self.auth_page = QWidget()
@@ -1084,6 +1002,7 @@ class RoomInterface(QWidget):
         self.action_btn = PrimaryPushButton(self.main_window.tr("btn_join_action"), card)
         self.action_btn.setIcon(FluentIcon.MESSAGE)
         self.action_btn.clicked.connect(self.join_or_create_room)
+        self.action_btn.setEnabled(False)
         card_layout.addWidget(self.action_btn)
 
         layout.addWidget(card)
@@ -1096,10 +1015,37 @@ class RoomInterface(QWidget):
 
         self.stack.addWidget(self.auth_page)
 
-    def open_server_settings(self):
-        modal = ServerSettingsModalDialog(self.main_window, self.main_window)
-        if modal.exec():
-            modal.validate_and_apply()
+    def init_reserved_lobby_view(self):
+        self.reserved_page = QWidget()
+        layout = QVBoxLayout(self.reserved_page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        top = QHBoxLayout()
+        self.res_title = SubtitleLabel("", self.reserved_page)
+        self.wake_btn = PrimaryPushButton(self.main_window.tr("btn_wake"), self.reserved_page)
+        self.wake_btn.setIcon(FluentIcon.MESSAGE)
+        self.wake_btn.clicked.connect(self.wake_from_sleep)
+        top.addWidget(self.res_title)
+        top.addStretch()
+        top.addWidget(self.wake_btn)
+        layout.addLayout(top)
+
+        self.res_scroll = ScrollArea(self.reserved_page)
+        self.res_scroll.setWidgetResizable(True)
+        self.res_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.res_scroll.setStyleSheet("background: transparent;")
+        
+        self.res_content = QWidget()
+        self.res_layout = QVBoxLayout(self.res_content)
+        self.res_layout.setContentsMargins(0, 0, 0, 0)
+        self.res_layout.setSpacing(8)
+        self.res_layout.addStretch()
+        
+        self.res_scroll.setWidget(self.res_content)
+        layout.addWidget(self.res_scroll)
+
+        self.stack.addWidget(self.reserved_page)
 
     def init_room_view(self):
         self.room_page = QWidget()
@@ -1110,12 +1056,17 @@ class RoomInterface(QWidget):
         top_row = QHBoxLayout()
         self.room_heading = SubtitleLabel(self.main_window.tr("lobby_title").format(room=""), self.room_page)
 
+        self.reserve_toggle_btn = PillPushButton(self.main_window.tr("btn_pin_off"), self.room_page)
+        self.reserve_toggle_btn.setCheckable(True)
+        self.reserve_toggle_btn.clicked.connect(self.toggle_room_reserve)
+
         self.leave_btn = PushButton(self.main_window.tr("btn_leave"), self.room_page)
         self.leave_btn.setIcon(FluentIcon.POWER_BUTTON)
-        self.leave_btn.clicked.connect(self.leave_room)
+        self.leave_btn.clicked.connect(self.leave_or_sleep_room)
 
         top_row.addWidget(self.room_heading)
         top_row.addStretch()
+        top_row.addWidget(self.reserve_toggle_btn)
         top_row.addWidget(self.leave_btn)
         layout.addLayout(top_row)
 
@@ -1177,53 +1128,105 @@ class RoomInterface(QWidget):
         columns_layout.addWidget(right_col, 5)
         layout.addLayout(columns_layout)
 
-        action_card = SimpleCardWidget(self.room_page)
-        action_layout = QHBoxLayout(action_card)
-        action_layout.setContentsMargins(16, 12, 16, 12)
-        action_layout.setSpacing(12)
-
-        self.mute_btn = PillPushButton(self.main_window.tr("btn_on"), action_card)
-        self.mute_btn.setIcon(FluentIcon.MICROPHONE)
-        self.mute_btn.setCheckable(True)
-        self.mute_btn.clicked.connect(self.toggle_mic)
-
-        self.deaf_btn = PillPushButton(self.main_window.tr("btn_on"), action_card)
-        self.deaf_btn.setIcon(FluentIcon.HEADPHONE)
-        self.deaf_btn.setCheckable(True)
-        self.deaf_btn.clicked.connect(self.toggle_deaf)
-
-        self.self_listen_btn = PillPushButton(self.main_window.tr("btn_self_listen_off"), action_card)
-        self.self_listen_btn.setIcon(FluentIcon.VOLUME)
-        self.self_listen_btn.setCheckable(True)
-        self.self_listen_btn.clicked.connect(self.toggle_self_listen)
-
-        action_layout.addWidget(self.mute_btn)
-        action_layout.addWidget(self.deaf_btn)
-        action_layout.addStretch()
-        action_layout.addWidget(self.self_listen_btn)
-
-        layout.addWidget(action_card)
         self.stack.addWidget(self.room_page)
 
-    def check_room_status(self, text):
+    def init_permanent_control_bar(self):
+        self.ctrl_card = SimpleCardWidget(self)
+        ctrl_layout = QHBoxLayout(self.ctrl_card)
+        ctrl_layout.setContentsMargins(16, 10, 16, 10)
+        ctrl_layout.setSpacing(10)
+
+        self.mute_btn = PillPushButton(self.main_window.tr("btn_on"), self.ctrl_card)
+        self.mute_btn.setIcon(FluentIcon.MICROPHONE)
+        self.mute_btn.setCheckable(True)
+        self.mute_btn.setChecked(self.main_window.state["mic_muted"])
+        self.mute_btn.clicked.connect(self.toggle_mic)
+
+        self.deaf_btn = PillPushButton(self.main_window.tr("btn_on"), self.ctrl_card)
+        self.deaf_btn.setIcon(FluentIcon.HEADPHONE)
+        self.deaf_btn.setCheckable(True)
+        self.deaf_btn.setChecked(self.main_window.state["deafened"])
+        self.deaf_btn.clicked.connect(self.toggle_deaf)
+
+        self.self_listen_btn = PillPushButton(self.main_window.tr("btn_self_listen_off"), self.ctrl_card)
+        self.self_listen_btn.setIcon(FluentIcon.VOLUME)
+        self.self_listen_btn.setCheckable(True)
+        self.self_listen_btn.setChecked(self.main_window.state["self_listen"])
+        self.self_listen_btn.clicked.connect(self.toggle_self_listen)
+        self.self_listen_btn.setVisible(self.main_window.cfg.get("dev_mode", False))
+
+        self.quick_soundpad_combo = ComboBox(self.ctrl_card)
+        self.quick_soundpad_combo.setPlaceholderText(self.main_window.tr("soundpad_select_placeholder"))
+        self.quick_soundpad_combo.currentIndexChanged.connect(self.on_quick_soundpad_selected)
+
+        ctrl_layout.addWidget(self.mute_btn)
+        ctrl_layout.addWidget(self.deaf_btn)
+        ctrl_layout.addWidget(self.self_listen_btn)
+        ctrl_layout.addStretch()
+        ctrl_layout.addWidget(self.quick_soundpad_combo)
+
+        self.layout.addWidget(self.ctrl_card)
+        self.refresh_quick_soundpad()
+
+    def refresh_quick_soundpad(self):
+        self.quick_soundpad_combo.blockSignals(True)
+        self.quick_soundpad_combo.clear()
+        self.quick_soundpad_combo.addItem(self.main_window.tr("soundpad_select_placeholder"), userData=None)
+        sp_items = load_soundpad()
+        for it in sp_items:
+            path_val = it.get("cached_path") or it.get("path") or it.get("orig_path")
+            if path_val:
+                raw_name = it["name"]
+                display_name = (raw_name[:18] + '...') if len(raw_name) > 20 else raw_name
+                self.quick_soundpad_combo.addItem(display_name, userData=path_val)
+        self.quick_soundpad_combo.setCurrentIndex(0)
+        self.quick_soundpad_combo.blockSignals(False)
+
+    def on_quick_soundpad_selected(self, idx):
+        if idx > 0:
+            path = self.quick_soundpad_combo.itemData(idx)
+            if path and os.path.exists(path):
+                self.main_window.soundpad_interface.play_sound(path)
+            self.quick_soundpad_combo.setCurrentIndex(0)
+
+    def open_server_settings(self):
+        modal = ServerSettingsModalDialog(self.main_window, self.main_window)
+        if modal.exec():
+            modal.validate_and_apply()
+            self.check_room_status(self.room_input.text())
+
+    def check_room_status(self, text=None):
+        if text is None:
+            text = self.room_input.text()
+
         if not self.main_window.cfg.get("server_url"):
             self.status_lbl.setText(self.main_window.tr("status_need_server"))
             self.status_lbl.setStyleSheet("color: #FFA000;")
+            self.action_btn.setEnabled(False)
             return
 
         r_id = text.strip()
         if len(r_id) < 3:
             self.status_lbl.setText(self.main_window.tr("status_room_len_err"))
             self.status_lbl.setStyleSheet("color: #888888;")
+            self.action_btn.setEnabled(False)
             return
         
         self.status_lbl.setText(self.main_window.tr("status_checking"))
+        self.status_lbl.setStyleSheet("color: #888888;")
+        self.action_btn.setEnabled(False)
+
         self.main_window.send_json_msg({
             "type": "CHECK_ROOM",
             "room": r_id
         })
 
-    def set_room_status_ui(self, exists):
+    def set_room_status_ui(self, exists, reserved=False, users=None):
+        r_id = self.room_input.text().strip()
+        if len(r_id) < 3:
+            self.action_btn.setEnabled(False)
+            return
+
         if exists:
             self.status_lbl.setText(self.main_window.tr("status_room_exists"))
             self.status_lbl.setStyleSheet("color: #4CAF50;")
@@ -1232,6 +1235,8 @@ class RoomInterface(QWidget):
             self.status_lbl.setText(self.main_window.tr("status_room_free"))
             self.status_lbl.setStyleSheet("color: #888888;")
             self.action_btn.setText(self.main_window.tr("btn_create_room"))
+
+        self.action_btn.setEnabled(True)
 
     def join_or_create_room(self):
         if not self.main_window.cfg.get("server_url"):
@@ -1246,8 +1251,6 @@ class RoomInterface(QWidget):
             InfoBar.error(
                 title="Error",
                 content=self.main_window.tr("input_fill_err"),
-                orient=Qt.Orientation.Horizontal,
-                isClosable=True,
                 position=InfoBarPosition.TOP,
                 duration=3000,
                 parent=self
@@ -1268,15 +1271,22 @@ class RoomInterface(QWidget):
             "password": pwd,
             "mic_muted": self.main_window.state["mic_muted"],
             "deafened": self.main_window.state["deafened"],
-            "self_listen": self.main_window.state["self_listen"]
+            "self_listen": self.main_window.state["self_listen"],
+            "reserve": (self.main_window.cfg.get("pinned_room") == r_id)
         })
 
-    def show_active_room(self):
+    def show_active_room(self, reserved=False):
         self.action_btn.setEnabled(True)
         self.action_btn.setText(self.main_window.tr("btn_join_action"))
         self.room_heading.setText(self.main_window.tr("lobby_title").format(room=self.main_window.state['room']))
         self.chat_view.clear()
         self.known_users = {self.main_window.state["user"]}
+        
+        is_pinned = (self.main_window.cfg.get("pinned_room") == self.main_window.state["room"])
+        self.reserve_toggle_btn.setChecked(is_pinned)
+        self.reserve_toggle_btn.setText(self.main_window.tr("btn_pin_on") if is_pinned else self.main_window.tr("btn_pin_off"))
+        self.leave_btn.setText(self.main_window.tr("btn_sleep") if is_pinned else self.main_window.tr("btn_leave"))
+
         initial_users = {
             self.main_window.state["user"]: {
                 "ping": 0,
@@ -1287,15 +1297,71 @@ class RoomInterface(QWidget):
         }
         self.update_users_list(initial_users)
         self.main_window.overlay.update_users(initial_users)
-        self.stack.setCurrentIndex(1)
+        self.stack.setCurrentIndex(2)
+        self.refresh_quick_soundpad()
         self.main_window.notify_event("user_joined")
+
+    def show_reserved_lobby(self, room_id, users_dict):
+        self.res_title.setText(self.main_window.tr("reserved_lobby_title").format(room=room_id))
+        
+        while self.res_layout.count() > 1:
+            item = self.res_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for u, udata in users_dict.items():
+            card = SimpleCardWidget(self.res_content)
+            card.setStyleSheet("background-color: rgba(255, 255, 255, 0.04); border-radius: 6px;")
+            l = QHBoxLayout(card)
+            l.setContentsMargins(10, 6, 10, 6)
+            
+            ping_val = udata.get("ping", 0)
+            p_color = "#4CAF50" if ping_val < 90 else ("#FFA000" if ping_val < 180 else "#F44336")
+            
+            dot = CaptionLabel("●", card)
+            dot.setStyleSheet(f"color: {p_color};")
+            l.addWidget(dot)
+            
+            p_lbl = CaptionLabel(f"{ping_val}ms" if ping_val > 0 else "--ms", card)
+            p_lbl.setStyleSheet(f"color: {p_color}; font-weight: bold;")
+            l.addWidget(p_lbl)
+
+            n_lbl = StrongBodyLabel(u, card)
+            l.addWidget(n_lbl)
+            l.addStretch()
+            self.res_layout.insertWidget(self.res_layout.count() - 1, card)
+
+        self.stack.setCurrentIndex(1)
+        self.refresh_quick_soundpad()
+
+    def wake_from_sleep(self):
+        res_room = self.main_window.cfg.get("pinned_room")
+        res_pwd = self.main_window.cfg.get("pinned_pwd", "")
+        if res_room:
+            self.name_input.setText(self.main_window.state["user"])
+            self.room_input.setText(res_room)
+            self.pwd_input.setText(res_pwd)
+            self.join_or_create_room()
+
+    def toggle_room_reserve(self):
+        is_pinned = self.reserve_toggle_btn.isChecked()
+        self.reserve_toggle_btn.setText(self.main_window.tr("btn_pin_on") if is_pinned else self.main_window.tr("btn_pin_off"))
+        self.leave_btn.setText(self.main_window.tr("btn_sleep") if is_pinned else self.main_window.tr("btn_leave"))
+        
+        self.main_window.cfg["pinned_room"] = self.main_window.state["room"] if is_pinned else None
+        self.main_window.cfg["pinned_pwd"] = self.main_window.state["password"] if is_pinned else ""
+        save_config(self.main_window.cfg)
+
+        self.main_window.send_json_msg({
+            "type": "TOGGLE_RESERVE",
+            "reserve": is_pinned
+        })
 
     def toggle_mic(self):
         self.main_window.state["mic_muted"] = not self.main_window.state["mic_muted"]
         is_muted = self.main_window.state["mic_muted"]
         self.mute_btn.setChecked(is_muted)
         self.mute_btn.setText(self.main_window.tr("btn_off") if is_muted else self.main_window.tr("btn_on"))
-        self.mute_btn.setIcon(FluentIcon.MICROPHONE)
         if is_muted:
             self.main_window.speaker_glow_levels[self.main_window.state["user"]] = 0.0
         
@@ -1350,7 +1416,15 @@ class RoomInterface(QWidget):
         if not is_me:
             self.main_window.notify_event("chat")
 
+    def reorder_users_drag(self, src_user, dest_user):
+        if src_user in self.main_window.user_order and dest_user in self.main_window.user_order:
+            self.main_window.user_order.remove(src_user)
+            idx = self.main_window.user_order.index(dest_user)
+            self.main_window.user_order.insert(idx, src_user)
+            self.update_users_list(self.main_window.last_received_users)
+
     def update_users_list(self, users_dict):
+        self.main_window.last_received_users = users_dict
         current_users = set(users_dict.keys())
         new_comers = current_users - self.known_users
         left_users = self.known_users - current_users
@@ -1369,6 +1443,15 @@ class RoomInterface(QWidget):
 
         self.known_users = current_users
 
+        ordered = [self.main_window.state["user"]]
+        for u in self.main_window.user_order:
+            if u in users_dict and u != self.main_window.state["user"]:
+                ordered.append(u)
+        for u in users_dict:
+            if u not in ordered:
+                ordered.append(u)
+        self.main_window.user_order = ordered
+
         while self.users_layout.count() > 1:
             item = self.users_layout.takeAt(0)
             if item.widget():
@@ -1377,15 +1460,27 @@ class RoomInterface(QWidget):
         self.user_ping_labels.clear()
         self.user_state_icons.clear()
 
-        for u, udata in users_dict.items():
+        for u in self.main_window.user_order:
+            if u not in users_dict:
+                continue
+            udata = users_dict[u]
             is_me = (u == self.main_window.state["user"])
-            user_card = SimpleCardWidget(self.users_content)
-            user_card.setObjectName(f"user_card_{u}")
-            user_card.setStyleSheet("SimpleCardWidget { border: 2px solid transparent; border-radius: 8px; background-color: transparent; }")
+            
+            user_card = DraggableUserCard(u, self, self.users_content)
+            user_card.setAcceptDrops(not is_me)
             
             uc_layout = QHBoxLayout(user_card)
-            uc_layout.setContentsMargins(12, 8, 12, 8)
+            uc_layout.setContentsMargins(10, 8, 12, 8)
             uc_layout.setSpacing(8)
+
+            if not is_me:
+                handle = QLabel("≡", user_card)
+                handle.setFixedWidth(14)
+                handle.setStyleSheet("color: rgba(255, 255, 255, 0.4); font-size: 16px; font-weight: bold;")
+                handle.setCursor(Qt.CursorShape.SizeVerCursor)
+                uc_layout.addWidget(handle)
+            else:
+                uc_layout.addSpacing(6)
 
             ping_val = udata.get("ping", 0) if isinstance(udata, dict) else 0
             p_color = "#4CAF50" if ping_val < 90 else ("#FFA000" if ping_val < 180 else "#F44336")
@@ -1405,21 +1500,6 @@ class RoomInterface(QWidget):
             uc_layout.addWidget(name_lbl)
             uc_layout.addStretch()
 
-            if not is_me:
-                if u not in self.main_window.peer_volumes:
-                    self.main_window.peer_volumes[u] = 1.0
-
-                current_vol = self.main_window.peer_volumes[u]
-                vol_label = CaptionLabel(f"{int(current_vol * 100)}%", user_card)
-                vol_label.setFixedWidth(38)
-                vol_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-                vol_icon = DraggableVolumeIcon(FluentIcon.VOLUME, user_card, current_vol)
-                vol_icon.volume_changed.connect(lambda v, l=vol_label, usr=u: self.on_vol_change(usr, v, l))
-
-                uc_layout.addWidget(vol_icon)
-                uc_layout.addWidget(vol_label)
-
             u_mic_off = self.main_window.state["mic_muted"] if is_me else udata.get("mic_muted", False)
             u_deaf_on = self.main_window.state["deafened"] if is_me else udata.get("deafened", False)
 
@@ -1432,7 +1512,6 @@ class RoomInterface(QWidget):
             uc_layout.addWidget(spk_status_icon)
 
             self.user_state_icons[u] = (mic_status_icon, spk_status_icon)
-
             self.user_cards[u] = user_card
             self.users_layout.insertWidget(self.users_layout.count() - 1, user_card)
 
@@ -1447,16 +1526,16 @@ class RoomInterface(QWidget):
             card = self.user_cards[username]
             r, g, b = rgb_tuple
             if alpha > 0.01:
-                b_alpha = 0.95 * alpha
+                b_alpha = min(1.0, 0.40 + 0.60 * alpha)
                 card.setStyleSheet(f"""
                     SimpleCardWidget {{
                         border: 2px solid rgba({r}, {g}, {b}, {b_alpha:.2f});
                         border-radius: 8px;
-                        background-color: transparent;
+                        background-color: rgba(255, 255, 255, 0.04);
                     }}
                 """)
             else:
-                card.setStyleSheet("SimpleCardWidget { border: 2px solid transparent; border-radius: 8px; background-color: transparent; }")
+                card.setStyleSheet("SimpleCardWidget { border: 2px solid transparent; border-radius: 8px; background-color: rgba(255, 255, 255, 0.04); }")
 
     def update_user_ping_ui(self, user, ping_ms):
         if user in self.user_ping_labels:
@@ -1466,14 +1545,309 @@ class RoomInterface(QWidget):
             lbl.setText(f"{ping_ms}ms")
             lbl.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px;")
 
-    def on_vol_change(self, user, val, label):
-        label.setText(f"{int(val * 100)}%")
-        self.main_window.peer_volumes[user] = float(val)
-
-    def leave_room(self):
+    def leave_or_sleep_room(self):
+        is_pinned = (self.main_window.cfg.get("pinned_room") == self.main_window.state["room"])
         self.main_window.notify_event("user_left")
         self.main_window.leave_and_cleanup()
-        self.stack.setCurrentIndex(0)
+        
+        if is_pinned:
+            self.show_reserved_lobby(self.main_window.cfg.get("pinned_room"), {})
+        else:
+            self.stack.setCurrentIndex(0)
+            self.check_room_status()
+
+class SoundpadCard(SimpleCardWidget):
+    def __init__(self, idx, sound_data, soundpad_interface, parent=None):
+        super().__init__(parent)
+        self.idx = idx
+        self.sound_data = sound_data
+        self.soundpad_interface = soundpad_interface
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(10)
+
+        icon = IconWidget(FluentIcon.MUSIC, self)
+        icon.setFixedSize(18, 18)
+        layout.addWidget(icon)
+
+        self.name_lbl = StrongBodyLabel(sound_data["name"], self)
+        self.name_lbl.setMinimumWidth(80)
+        layout.addWidget(self.name_lbl, 1)
+
+        self.key_edit = KeyRecorderEdit(self)
+        self.key_edit.setFixedWidth(105)
+        self.key_edit.setText(sound_data.get("hotkey", ""))
+        self.key_edit.keySequenceRecorded.connect(lambda k: self.soundpad_interface.on_hotkey_changed(self.idx, k))
+        layout.addWidget(self.key_edit)
+
+        cached_p = sound_data.get("cached_path") or sound_data.get("path")
+        play_btn = PrimaryPushButton(self.soundpad_interface.main_window.tr("sound_play_btn"), self)
+        play_btn.setIcon(FluentIcon.PLAY)
+        play_btn.clicked.connect(lambda: self.soundpad_interface.play_sound(cached_p))
+        layout.addWidget(play_btn)
+
+        del_btn = ToolButton(FluentIcon.DELETE, self)
+        del_btn.clicked.connect(lambda: self.soundpad_interface.delete_sound(self.idx))
+        layout.addWidget(del_btn)
+
+class SoundpadInterface(QWidget):
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        self.setObjectName("SoundpadInterface")
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(32, 24, 32, 24)
+        self.layout.setSpacing(14)
+        
+        self.current_playback_id = 0
+        self.sounds = load_soundpad()
+        self.init_ui()
+
+    def init_ui(self):
+        top = QHBoxLayout()
+        self.title = SubtitleLabel(self.main_window.tr("soundpad_title"), self)
+        add_btn = PrimaryPushButton(self.main_window.tr("btn_add_sound"), self)
+        add_btn.setIcon(FluentIcon.ADD)
+        add_btn.clicked.connect(self.add_sound_file)
+        top.addWidget(self.title)
+        top.addStretch()
+        top.addWidget(add_btn)
+        self.layout.addLayout(top)
+
+        # 1. Панель настроек громкости
+        vol_card = SimpleCardWidget(self)
+        v_layout = QVBoxLayout(vol_card)
+        v_layout.setContentsMargins(18, 14, 18, 14)
+        v_layout.setSpacing(12)
+
+        tx_row = QHBoxLayout()
+        tx_row.addWidget(BodyLabel(self.main_window.tr("soundpad_tx_vol"), vol_card))
+        self.tx_vol_lbl = CaptionLabel(f"{int(self.main_window.cfg.get('soundpad_tx_vol', 1.0) * 100)}%", vol_card)
+        self.tx_vol_slider = Slider(Qt.Orientation.Horizontal, vol_card)
+        self.tx_vol_slider.setRange(0, 150)
+        self.tx_vol_slider.setValue(int(self.main_window.cfg.get("soundpad_tx_vol", 1.0) * 100))
+        self.tx_vol_slider.valueChanged.connect(self.on_tx_volume_changed)
+        tx_row.addWidget(self.tx_vol_slider)
+        tx_row.addWidget(self.tx_vol_lbl)
+        v_layout.addLayout(tx_row)
+
+        loc_row = QHBoxLayout()
+        loc_row.addWidget(BodyLabel(self.main_window.tr("soundpad_local_vol"), vol_card))
+        self.local_vol_lbl = CaptionLabel(f"{int(self.main_window.cfg.get('soundpad_local_vol', 1.0) * 100)}%", vol_card)
+        self.local_vol_slider = Slider(Qt.Orientation.Horizontal, vol_card)
+        self.local_vol_slider.setRange(0, 150)
+        self.local_vol_slider.setValue(int(self.main_window.cfg.get("soundpad_local_vol", 1.0) * 100))
+        self.local_vol_slider.valueChanged.connect(self.on_local_volume_changed)
+        loc_row.addWidget(self.local_vol_slider)
+        loc_row.addWidget(self.local_vol_lbl)
+        v_layout.addLayout(loc_row)
+
+        self.layout.addWidget(vol_card)
+
+        # 2. Панель опций остановки и прерывания
+        opt_card = SimpleCardWidget(self)
+        opt_l = QVBoxLayout(opt_card)
+        opt_l.setContentsMargins(18, 12, 18, 12)
+        opt_l.setSpacing(10)
+
+        stop_row = QHBoxLayout()
+        stop_row.addWidget(BodyLabel(self.main_window.tr("soundpad_stop_hotkey"), opt_card))
+        self.stop_key_edit = KeyRecorderEdit(opt_card)
+        self.stop_key_edit.setText(self.main_window.cfg.get("bind_soundpad_stop", ""))
+        self.stop_key_edit.keySequenceRecorded.connect(self.on_stop_hotkey_changed)
+        stop_row.addWidget(self.stop_key_edit)
+        
+        stop_btn = PushButton(self.main_window.tr("btn_stop_sound"), opt_card)
+        stop_btn.setIcon(FluentIcon.CANCEL)
+        stop_btn.clicked.connect(self.stop_all_sounds)
+        stop_row.addWidget(stop_btn)
+        opt_l.addLayout(stop_row)
+
+        self.interrupt_switch = SwitchButton(opt_card)
+        self.interrupt_switch.setOnText(self.main_window.tr("btn_on"))
+        self.interrupt_switch.setOffText(self.main_window.tr("btn_off"))
+        self.interrupt_switch.setChecked(self.main_window.cfg.get("soundpad_interrupt", True))
+        self.interrupt_switch.checkedChanged.connect(self.on_interrupt_toggled)
+        
+        sw_row = QHBoxLayout()
+        sw_row.addWidget(BodyLabel(self.main_window.tr("soundpad_interrupt_switch"), opt_card))
+        sw_row.addStretch()
+        sw_row.addWidget(self.interrupt_switch)
+        opt_l.addLayout(sw_row)
+
+        self.layout.addWidget(opt_card)
+
+        # 3. Список звуков
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setStyleSheet("background: transparent;")
+        
+        self.cards_content = QWidget()
+        self.cards_layout = QVBoxLayout(self.cards_content)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.setSpacing(8)
+        self.cards_layout.addStretch()
+        
+        self.scroll.setWidget(self.cards_content)
+        self.layout.addWidget(self.scroll, 1)
+
+        self.refresh_list()
+
+    def on_tx_volume_changed(self, v):
+        self.tx_vol_lbl.setText(f"{v}%")
+        self.main_window.cfg["soundpad_tx_vol"] = v / 100.0
+        save_config(self.main_window.cfg)
+
+    def on_local_volume_changed(self, v):
+        self.local_vol_lbl.setText(f"{v}%")
+        self.main_window.cfg["soundpad_local_vol"] = v / 100.0
+        save_config(self.main_window.cfg)
+
+    def on_stop_hotkey_changed(self, combo):
+        self.main_window.cfg["bind_soundpad_stop"] = combo
+        save_config(self.main_window.cfg)
+        self.update_soundpad_hotkeys()
+
+    def on_interrupt_toggled(self, is_checked):
+        self.main_window.cfg["soundpad_interrupt"] = is_checked
+        save_config(self.main_window.cfg)
+
+    def stop_all_sounds(self):
+        self.current_playback_id += 1
+        with self.main_window.audio_lock:
+            self.main_window.local_soundpad_active_tracks.clear()
+
+    def refresh_list(self):
+        while self.cards_layout.count() > 1:
+            item = self.cards_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for i, s in enumerate(self.sounds):
+            card = SoundpadCard(i, s, self, self.cards_content)
+            self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
+
+        self.update_soundpad_hotkeys()
+        self.main_window.room_interface.refresh_quick_soundpad()
+
+    def add_sound_file(self):
+        fpath, _ = QFileDialog.getOpenFileName(self, "Open Audio", "", "Audio Files (*.mp3 *.wav)")
+        if not fpath:
+            return
+
+        if not (fpath.lower().endswith(".mp3") or fpath.lower().endswith(".wav")):
+            InfoBar.warning("Format", "Поддерживаются только .mp3 и .wav файлы", duration=3000, parent=self)
+            return
+
+        def _bg_convert():
+            cached = convert_and_cache_audio(fpath)
+            if cached and os.path.exists(cached):
+                name = os.path.splitext(os.path.basename(fpath))[0]
+                self.sounds.append({"name": name, "orig_path": fpath, "cached_path": cached, "hotkey": ""})
+                save_soundpad(self.sounds)
+                QTimer.singleShot(0, self.refresh_list)
+                QTimer.singleShot(0, lambda: InfoBar.success("Soundpad", f"Звук '{name}' добавлен", duration=2500, parent=self))
+            else:
+                QTimer.singleShot(0, lambda: InfoBar.error("Error", "Не удалось обработать аудиофайл", duration=3500, parent=self))
+
+        threading.Thread(target=_bg_convert, daemon=True).start()
+
+    def on_hotkey_changed(self, idx, combo):
+        if idx < len(self.sounds):
+            self.sounds[idx]["hotkey"] = combo
+            save_soundpad(self.sounds)
+            self.update_soundpad_hotkeys()
+
+    def delete_sound(self, idx):
+        if idx < len(self.sounds):
+            item = self.sounds.pop(idx)
+            p = item.get("cached_path")
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+            save_soundpad(self.sounds)
+            self.refresh_list()
+
+    def update_soundpad_hotkeys(self):
+        sp_map = {}
+        for s in self.sounds:
+            p = s.get("cached_path") or s.get("path")
+            if s.get("hotkey") and p:
+                sp_map[f"soundpad_{p}"] = s["hotkey"]
+        
+        stop_key = self.main_window.cfg.get("bind_soundpad_stop", "")
+        if stop_key:
+            sp_map["soundpad_stop_all"] = stop_key
+
+        self.main_window.hotkey_mgr.set_hotkeys({**self.main_window.get_system_hotkeys(), **sp_map})
+
+    def play_sound(self, cached_wav_path):
+        if not cached_wav_path or not os.path.exists(cached_wav_path):
+            return
+        
+        if self.main_window.cfg.get("soundpad_interrupt", True):
+            self.stop_all_sounds()
+
+        self.current_playback_id += 1
+        play_id = self.current_playback_id
+        
+        def _streamer():
+            try:
+                pcm_arr = read_pcm_from_cached_wav(cached_wav_path)
+                if pcm_arr is None:
+                    return
+
+                tx_vol = float(self.main_window.cfg.get("soundpad_tx_vol", 1.0))
+                local_vol = float(self.main_window.cfg.get("soundpad_local_vol", 1.0))
+
+                tx_pcm = pcm_arr * tx_vol
+                loc_pcm = pcm_arr * local_vol
+
+                # 1. Загрузка в прямой локальный PortAudio / SoundDevice буфер
+                chunks_to_add = []
+                for j in range(0, len(loc_pcm), BLOCK_SIZE):
+                    c = loc_pcm[j:j+BLOCK_SIZE]
+                    if len(c) < BLOCK_SIZE:
+                        c = np.pad(c, (0, BLOCK_SIZE - len(c)))
+                    chunks_to_add.append(c)
+
+                with self.main_window.audio_lock:
+                    if self.main_window.cfg.get("soundpad_interrupt", True):
+                        self.main_window.local_soundpad_active_tracks = [chunks_to_add]
+                    else:
+                        self.main_window.local_soundpad_active_tracks.append(chunks_to_add)
+
+                # 2. Сетевая отправка PCM чанками на сервер
+                if self.main_window.state["in_room"]:
+                    u_bytes = self.main_window.state["user"].encode('utf-8')
+                    header = bytearray([2, len(u_bytes)]) + u_bytes
+
+                    for i in range(0, len(tx_pcm), BLOCK_SIZE):
+                        if play_id != self.current_playback_id:
+                            break
+
+                        chunk = tx_pcm[i:i+BLOCK_SIZE]
+                        if len(chunk) < BLOCK_SIZE:
+                            chunk = np.pad(chunk, (0, BLOCK_SIZE - len(chunk)))
+                        
+                        self.main_window.speaker_activity[self.main_window.state["user"]] = time.time() + 0.35
+
+                        clipped = np.clip(chunk, -1.0, 1.0)
+                        pcm16 = (clipped * 32767).astype(np.int16)
+                        packet = bytes(header + pcm16.tobytes())
+                        
+                        if self.main_window.ws_loop and self.main_window.ws_loop.is_running():
+                            self.main_window.ws_loop.call_soon_threadsafe(self.main_window.out_queue.put_nowait, packet)
+                        
+                        time.sleep(BLOCK_SIZE / SAMPLE_RATE)
+            except Exception as e:
+                self.main_window.log(f"[Soundpad Streamer] {e}")
+
+        threading.Thread(target=_streamer, daemon=True).start()
 
 class SettingsInterface(QWidget):
     def __init__(self, main_window):
@@ -1495,10 +1869,11 @@ class SettingsInterface(QWidget):
         self.title = SubtitleLabel(self.main_window.tr("settings_title"), self)
         self.layout.addWidget(self.title)
 
-        scroll = ScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet("background: transparent;")
+        self.scroll = ScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setStyleSheet("background: transparent;")
+        self.scroll.verticalScrollBar().setSingleStep(25)
 
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -1569,7 +1944,7 @@ class SettingsInterface(QWidget):
 
         container_layout.addWidget(card1)
 
-        # DSP
+        # Обработка звука (DSP)
         card2 = SimpleCardWidget(container)
         c2_layout = QVBoxLayout(card2)
         c2_layout.setContentsMargins(20, 18, 20, 18)
@@ -1600,7 +1975,7 @@ class SettingsInterface(QWidget):
 
         container_layout.addWidget(card2)
 
-        # EQ
+        # Эквалайзер
         card3 = SimpleCardWidget(container)
         c3_layout = QVBoxLayout(card3)
         c3_layout.setContentsMargins(20, 18, 20, 18)
@@ -1623,7 +1998,7 @@ class SettingsInterface(QWidget):
 
         container_layout.addWidget(card3)
 
-        # Overlay
+        # Оверлей
         card4 = SimpleCardWidget(container)
         c4_layout = QVBoxLayout(card4)
         c4_layout.setContentsMargins(20, 18, 20, 18)
@@ -1652,17 +2027,17 @@ class SettingsInterface(QWidget):
         c4_layout.addWidget(self.overlay_mode_combo)
 
         c4_layout.addWidget(BodyLabel(self.main_window.tr("lbl_overlay_icons"), card4))
-        self.overlay_icons_combo = ComboBox(card4)
-        for icon_key in OVERLAY_ICONS_MODES:
-            self.overlay_icons_combo.addItem(self.main_window.tr(icon_key), userData=icon_key)
-        
-        cur_icon_key = self.main_window.cfg.get("overlay_icons_mode", "overlay_icons_mic")
-        for i in range(self.overlay_icons_combo.count()):
-            if self.overlay_icons_combo.itemData(i) == cur_icon_key:
-                self.overlay_icons_combo.setCurrentIndex(i)
-                break
-        self.overlay_icons_combo.currentIndexChanged.connect(self.on_overlay_icons_mode_changed)
-        c4_layout.addWidget(self.overlay_icons_combo)
+        self.ov_mic_sw = SwitchButton(card4)
+        self.ov_mic_sw.setOnText(self.main_window.tr("switch_ov_mic"))
+        self.ov_mic_sw.setChecked(self.main_window.cfg.get("ov_icon_mic", True))
+        self.ov_mic_sw.checkedChanged.connect(self.on_ov_icons_changed)
+        c4_layout.addWidget(self.ov_mic_sw)
+
+        self.ov_spk_sw = SwitchButton(card4)
+        self.ov_spk_sw.setOnText(self.main_window.tr("switch_ov_spk"))
+        self.ov_spk_sw.setChecked(self.main_window.cfg.get("ov_icon_spk", True))
+        self.ov_spk_sw.checkedChanged.connect(self.on_ov_icons_changed)
+        c4_layout.addWidget(self.ov_spk_sw)
 
         self.overlay_pos_container = QWidget(card4)
         pos_layout = QGridLayout(self.overlay_pos_container)
@@ -1703,7 +2078,7 @@ class SettingsInterface(QWidget):
 
         container_layout.addWidget(card4)
 
-        # Hotkeys
+        # Горячие клавиши
         card5 = SimpleCardWidget(container)
         c5_layout = QVBoxLayout(card5)
         c5_layout.setContentsMargins(20, 18, 20, 18)
@@ -1714,34 +2089,55 @@ class SettingsInterface(QWidget):
         bind_grid = QGridLayout()
         bind_grid.addWidget(BodyLabel(self.main_window.tr("lbl_hk_mic")), 0, 0)
         self.mute_bind_input = KeyRecorderEdit(card5)
-        self.mute_bind_input.setText(self.main_window.cfg.get("bind_mute_mic", "Ctrl+M"))
+        self.mute_bind_input.setText(self.main_window.cfg.get("bind_mute_mic", ""))
         self.mute_bind_input.keySequenceRecorded.connect(lambda _: self.execute_save_settings())
         bind_grid.addWidget(self.mute_bind_input, 0, 1)
 
         bind_grid.addWidget(BodyLabel(self.main_window.tr("lbl_hk_spk")), 1, 0)
         self.deaf_bind_input = KeyRecorderEdit(card5)
-        self.deaf_bind_input.setText(self.main_window.cfg.get("bind_deafen", "Ctrl+D"))
+        self.deaf_bind_input.setText(self.main_window.cfg.get("bind_deafen", ""))
         self.deaf_bind_input.keySequenceRecorded.connect(lambda _: self.execute_save_settings())
         bind_grid.addWidget(self.deaf_bind_input, 1, 1)
 
         bind_grid.addWidget(BodyLabel(self.main_window.tr("lbl_hk_tray")), 2, 0)
         self.tray_bind_input = KeyRecorderEdit(card5)
-        self.tray_bind_input.setText(self.main_window.cfg.get("bind_tray", "Ctrl+H"))
+        self.tray_bind_input.setText(self.main_window.cfg.get("bind_tray", ""))
         self.tray_bind_input.keySequenceRecorded.connect(lambda _: self.execute_save_settings())
         bind_grid.addWidget(self.tray_bind_input, 2, 1)
 
         bind_grid.addWidget(BodyLabel(self.main_window.tr("lbl_hk_overlay")), 3, 0)
         self.overlay_bind_input = KeyRecorderEdit(card5)
-        self.overlay_bind_input.setText(self.main_window.cfg.get("bind_overlay", "Ctrl+O"))
+        self.overlay_bind_input.setText(self.main_window.cfg.get("bind_overlay", ""))
         self.overlay_bind_input.keySequenceRecorded.connect(lambda _: self.execute_save_settings())
         bind_grid.addWidget(self.overlay_bind_input, 3, 1)
 
         c5_layout.addLayout(bind_grid)
         container_layout.addWidget(card5)
 
-        scroll.setWidget(container)
-        self.layout.addWidget(scroll)
+        # Режим разработчика в самом конце
+        card_dev = SimpleCardWidget(container)
+        c_dev_layout = QVBoxLayout(card_dev)
+        c_dev_layout.setContentsMargins(20, 18, 20, 18)
+        c_dev_layout.setSpacing(12)
+        c_dev_layout.addWidget(StrongBodyLabel(self.main_window.tr("group_dev"), card_dev))
+
+        self.dev_switch = SwitchButton(card_dev)
+        self.dev_switch.setOnText(self.main_window.tr("switch_dev_on"))
+        self.dev_switch.setOffText(self.main_window.tr("switch_dev_off"))
+        self.dev_switch.setChecked(self.main_window.cfg.get("dev_mode", False))
+        self.dev_switch.checkedChanged.connect(self.on_dev_switch_toggled)
+        c_dev_layout.addWidget(self.dev_switch)
+
+        container_layout.addWidget(card_dev)
+
+        self.scroll.setWidget(container)
+        self.layout.addWidget(self.scroll)
         self.refresh_devices()
+
+    def on_dev_switch_toggled(self, is_dev):
+        self.main_window.cfg["dev_mode"] = is_dev
+        save_config(self.main_window.cfg)
+        self.main_window.toggle_dev_mode(is_dev)
 
     def on_lang_changed(self):
         selected_lang = self.lang_combo.currentData()
@@ -1785,13 +2181,12 @@ class SettingsInterface(QWidget):
             self.main_window.overlay.apply_scale_and_styles()
             self.trigger_delayed_save()
 
-    def on_overlay_icons_mode_changed(self):
-        mode = self.overlay_icons_combo.currentData()
-        if mode:
-            self.main_window.cfg["overlay_icons_mode"] = mode
-            self.main_window.overlay.rebuild_layout_order()
-            self.main_window.overlay.apply_scale_and_styles()
-            self.trigger_delayed_save()
+    def on_ov_icons_changed(self):
+        self.main_window.cfg["ov_icon_mic"] = self.ov_mic_sw.isChecked()
+        self.main_window.cfg["ov_icon_spk"] = self.ov_spk_sw.isChecked()
+        self.main_window.overlay.rebuild_layout_order()
+        self.main_window.overlay.apply_scale_and_styles()
+        self.trigger_delayed_save()
 
     def on_scale_slider_changed(self, val):
         self.scale_label.setText(f"{val}%")
@@ -1824,10 +2219,27 @@ class SettingsInterface(QWidget):
         for d in out_devs:
             self.spk_combo.addItem(d["name"])
 
+        found_mic = False
         if self.main_window.cfg.get("mic_device"):
-            self.mic_combo.setCurrentText(self.main_window.cfg.get("mic_device"))
+            for i in range(self.mic_combo.count()):
+                if self.mic_combo.itemText(i) == self.main_window.cfg.get("mic_device"):
+                    self.mic_combo.setCurrentIndex(i)
+                    found_mic = True
+                    break
+        if not found_mic and self.mic_combo.count() > 0:
+            self.mic_combo.setCurrentIndex(0)
+            self.main_window.cfg["mic_device"] = self.mic_combo.currentText()
+
+        found_spk = False
         if self.main_window.cfg.get("speaker_device"):
-            self.spk_combo.setCurrentText(self.main_window.cfg.get("speaker_device"))
+            for i in range(self.spk_combo.count()):
+                if self.spk_combo.itemText(i) == self.main_window.cfg.get("speaker_device"):
+                    self.spk_combo.setCurrentIndex(i)
+                    found_spk = True
+                    break
+        if not found_spk and self.spk_combo.count() > 0:
+            self.spk_combo.setCurrentIndex(0)
+            self.main_window.cfg["speaker_device"] = self.spk_combo.currentText()
 
         self.mic_combo.blockSignals(False)
         self.spk_combo.blockSignals(False)
@@ -1857,18 +2269,17 @@ class SettingsInterface(QWidget):
         if mode_data:
             self.main_window.cfg["overlay_mode"] = mode_data
 
-        icons_data = self.overlay_icons_combo.currentData()
-        if icons_data:
-            self.main_window.cfg["overlay_icons_mode"] = icons_data
+        self.main_window.cfg["ov_icon_mic"] = self.ov_mic_sw.isChecked()
+        self.main_window.cfg["ov_icon_spk"] = self.ov_spk_sw.isChecked()
 
         self.main_window.cfg["overlay_scale"] = self.overlay_scale_slider.value()
         self.main_window.cfg["overlay_x_pct"] = float(self.overlay_x_slider.value())
         self.main_window.cfg["overlay_y_pct"] = float(self.overlay_y_slider.value())
 
-        self.main_window.cfg["bind_mute_mic"] = self.mute_bind_input.text().strip() or "Ctrl+M"
-        self.main_window.cfg["bind_deafen"] = self.deaf_bind_input.text().strip() or "Ctrl+D"
-        self.main_window.cfg["bind_tray"] = self.tray_bind_input.text().strip() or "Ctrl+H"
-        self.main_window.cfg["bind_overlay"] = self.overlay_bind_input.text().strip() or "Ctrl+O"
+        self.main_window.cfg["bind_mute_mic"] = self.mute_bind_input.text().strip()
+        self.main_window.cfg["bind_deafen"] = self.deaf_bind_input.text().strip()
+        self.main_window.cfg["bind_tray"] = self.tray_bind_input.text().strip()
+        self.main_window.cfg["bind_overlay"] = self.overlay_bind_input.text().strip()
 
         save_config(self.main_window.cfg)
         self.main_window.start_audio_stream()
@@ -1882,7 +2293,6 @@ class LogsInterface(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(32, 24, 32, 24)
         self.layout.setSpacing(12)
-        
         self.init_ui()
 
     def init_ui(self):
@@ -1918,7 +2328,6 @@ class InfoInterface(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(32, 24, 32, 24)
         self.layout.setSpacing(16)
-        
         self.init_ui()
 
     def init_ui(self):
@@ -1937,8 +2346,8 @@ class InfoInterface(QWidget):
         desc.setWordWrap(True)
         card_layout.addWidget(desc)
 
-        ver = CaptionLabel(self.main_window.tr("app_version"), card)
-        card_layout.addWidget(ver)
+        self.ver_lbl = CaptionLabel(self.main_window.tr("app_version"), card)
+        card_layout.addWidget(self.ver_lbl)
         card_layout.addSpacing(4)
 
         gh_btn = PushButton(self.main_window.tr("btn_github"), card)
@@ -1954,13 +2363,13 @@ class InfoInterface(QWidget):
 
 class MainWindow(FluentWindow):
     show_error_signal = pyqtSignal(str)
-    enter_room_signal = pyqtSignal()
+    enter_room_signal = pyqtSignal(bool)
     update_users_signal = pyqtSignal(dict)
     log_signal = pyqtSignal(str)
     chat_message_signal = pyqtSignal(str, str)
     smooth_glow_signal = pyqtSignal(str, float)
     user_ping_signal = pyqtSignal(str, int)
-    room_status_signal = pyqtSignal(bool)
+    room_status_signal = pyqtSignal(bool, bool, dict)
 
     def __init__(self):
         super().__init__()
@@ -1984,11 +2393,13 @@ class MainWindow(FluentWindow):
         self.ws_client = None
         self.ws_loop = None
         self.out_queue = None
-        self.peer_volumes = {}
         self.ping_start_time = 0
         self.current_ping = 0
+        self.user_order = []
+        self.last_received_users = {}
         
         self.incoming_audio_queue = {}
+        self.local_soundpad_active_tracks = []
         self.speaker_activity = {}
         self.speaker_glow_levels = {}
         self.last_played_audio_sample = np.zeros(BLOCK_SIZE, dtype=np.float32)
@@ -1997,7 +2408,8 @@ class MainWindow(FluentWindow):
         self.vad_hold_counter = 0
         self.audio_lock = threading.Lock()
 
-        self.audio_stream = None
+        self.input_stream = None
+        self.output_stream = None
         self.stream_lock = threading.Lock()
 
         self.hotkey_mgr = GlobalHotkeyManager()
@@ -2012,11 +2424,11 @@ class MainWindow(FluentWindow):
         
         self.glow_timer = QTimer(self)
         self.glow_timer.timeout.connect(self.update_speaking_glow_smooth)
-        self.glow_timer.start(33)
+        self.glow_timer.start(7)
 
         self.ping_timer = QTimer(self)
         self.ping_timer.timeout.connect(self.send_ping_request)
-        self.ping_timer.start(25000)
+        self.ping_timer.start(5000)
 
         self.log(f"[System] Wave Voice Client started. User: {default_user}")
         self.start_persistent_server_connection()
@@ -2027,21 +2439,25 @@ class MainWindow(FluentWindow):
 
     def init_window(self):
         self.setWindowTitle("Wave")
-        self.resize(700, 780)
-        self.setMinimumSize(580, 660)
+        self.resize(760, 680)
+        self.setMinimumSize(760, 680)
 
         setTheme(Theme.DARK)
         setThemeColor(self.accent_color)
 
         self.room_interface = RoomInterface(self)
+        self.soundpad_interface = SoundpadInterface(self)
         self.settings_interface = SettingsInterface(self)
         self.logs_interface = LogsInterface(self)
         self.info_interface = InfoInterface(self)
 
         self.addSubInterface(self.room_interface, FluentIcon.CHAT, self.tr("tab_room"))
+        self.addSubInterface(self.soundpad_interface, FluentIcon.MUSIC, self.tr("tab_soundpad"))
         self.addSubInterface(self.settings_interface, FluentIcon.SETTING, self.tr("tab_settings"))
         self.addSubInterface(self.logs_interface, FluentIcon.DOCUMENT, self.tr("tab_logs"))
         self.addSubInterface(self.info_interface, FluentIcon.INFO, self.tr("tab_info"))
+
+        self.toggle_dev_mode(self.cfg.get("dev_mode", False))
 
         self.navigationInterface.addItem(
             routeKey="minimize_tray_action",
@@ -2051,6 +2467,17 @@ class MainWindow(FluentWindow):
             selectable=False,
             position=NavigationItemPosition.BOTTOM
         )
+
+    def toggle_dev_mode(self, is_dev):
+        try:
+            r_key = self.logs_interface.objectName()
+            w = self.navigationInterface.panel.widget(r_key)
+            if w:
+                w.setVisible(is_dev)
+        except Exception:
+            pass
+        if hasattr(self, "room_interface"):
+            self.room_interface.self_listen_btn.setVisible(is_dev)
 
     def init_overlay(self):
         self.overlay = VoiceOverlay(self)
@@ -2139,15 +2566,13 @@ class MainWindow(FluentWindow):
         InfoBar.error(
             title="Error",
             content=err_msg,
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
             position=InfoBarPosition.TOP,
             duration=4000,
             parent=self.room_interface
         )
 
-    def on_enter_room(self):
-        self.room_interface.show_active_room()
+    def on_enter_room(self, reserved):
+        self.room_interface.show_active_room(reserved=reserved)
         self.send_ping_request()
 
     def notify_event(self, event_type):
@@ -2179,34 +2604,36 @@ class MainWindow(FluentWindow):
 
             if sound_file:
                 try:
-                    if sound_file.endswith(".wav"):
-                        winsound.PlaySound(sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
-                    else:
-                        ctypes.windll.winmm.mciSendStringW(f'open "{sound_file}" type mpegvideo alias {event_type}_snd', None, 0, 0)
-                        ctypes.windll.winmm.mciSendStringW(f'play {event_type}_snd from 0', None, 0, 0)
-                    return
-                except Exception:
-                    pass
-
-            try:
-                winsound.PlaySound("SystemNotification", winsound.SND_ALIAS | winsound.SND_ASYNC)
-            except Exception:
-                try:
-                    winsound.MessageBeep(winsound.MB_OK)
+                    p_arr = read_pcm_from_cached_wav(sound_file) or convert_and_cache_audio(sound_file)
+                    if p_arr is not None:
+                        if isinstance(p_arr, str):
+                            p_arr = read_pcm_from_cached_wav(p_arr)
+                        if p_arr is not None:
+                            chunks = []
+                            for j in range(0, len(p_arr), BLOCK_SIZE):
+                                c = p_arr[j:j+BLOCK_SIZE]
+                                if len(c) < BLOCK_SIZE:
+                                    c = np.pad(c, (0, BLOCK_SIZE - len(c)))
+                                chunks.append(c * 0.8)
+                            with self.audio_lock:
+                                self.local_soundpad_active_tracks.append(chunks)
                 except Exception:
                     pass
 
         threading.Thread(target=_play, daemon=True).start()
 
-    def update_global_hotkeys(self):
-        hotkeys = {
-            "mute": self.cfg.get("bind_mute_mic", "Ctrl+M"),
-            "deafen": self.cfg.get("bind_deafen", "Ctrl+D"),
-            "tray": self.cfg.get("bind_tray", "Ctrl+H"),
-            "overlay": self.cfg.get("bind_overlay", "Ctrl+O")
+    def get_system_hotkeys(self):
+        return {
+            "mute": self.cfg.get("bind_mute_mic", ""),
+            "deafen": self.cfg.get("bind_deafen", ""),
+            "tray": self.cfg.get("bind_tray", ""),
+            "overlay": self.cfg.get("bind_overlay", "")
         }
+
+    def update_global_hotkeys(self):
+        hotkeys = self.get_system_hotkeys()
         self.hotkey_mgr.set_hotkeys(hotkeys)
-        self.log(f"[Global Hotkeys] Active: Mic={hotkeys['mute']}, Spk={hotkeys['deafen']}, Tray={hotkeys['tray']}, Overlay={hotkeys['overlay']}")
+        self.soundpad_interface.update_soundpad_hotkeys()
 
     def on_global_hotkey_triggered(self, action):
         if action == "mute":
@@ -2217,10 +2644,17 @@ class MainWindow(FluentWindow):
             self.toggle_tray_minimize()
         elif action == "overlay":
             self.toggle_overlay()
+        elif action == "soundpad_stop_all":
+            self.soundpad_interface.stop_all_sounds()
+        elif action.startswith("soundpad_"):
+            p = action.replace("soundpad_", "")
+            self.soundpad_interface.play_sound(p)
 
     def update_speaking_glow_smooth(self):
         now = time.time()
         active_users = set(self.speaker_activity.keys()) | set(self.speaker_glow_levels.keys())
+        if not active_users:
+            return
 
         for user in active_users:
             last_t = self.speaker_activity.get(user, 0)
@@ -2234,9 +2668,9 @@ class MainWindow(FluentWindow):
             cur = self.speaker_glow_levels.get(user, 0.0)
 
             if cur < target:
-                cur = min(1.0, cur + 0.35)
+                cur = min(1.0, cur + 0.08)
             elif cur > target:
-                cur = max(0.0, cur - 0.12)
+                cur = max(0.0, cur - 0.04)
 
             if abs(cur - self.speaker_glow_levels.get(user, -1.0)) > 0.005:
                 self.speaker_glow_levels[user] = cur
@@ -2269,7 +2703,7 @@ class MainWindow(FluentWindow):
         def _runner():
             self.ws_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.ws_loop)
-            self.out_queue = asyncio.Queue(maxsize=50)
+            self.out_queue = asyncio.Queue(maxsize=100)
             self.ws_loop.run_until_complete(self._persistent_ws_handler())
 
         threading.Thread(target=_runner, daemon=True).start()
@@ -2295,11 +2729,14 @@ class MainWindow(FluentWindow):
 
                         if mtype == "ROOM_STATUS":
                             exists = data.get("exists", False)
-                            self.room_status_signal.emit(exists)
+                            reserved = data.get("reserved", False)
+                            users = data.get("users", {})
+                            self.room_status_signal.emit(exists, reserved, users)
 
                         elif mtype == "JOIN_OK":
                             self.state["in_room"] = True
-                            self.enter_room_signal.emit()
+                            reserved = data.get("reserved", False)
+                            self.enter_room_signal.emit(reserved)
                             self.log(f"[Server] Authorization success in room '{data.get('room')}'")
 
                         elif mtype == "AUTH_ERROR":
@@ -2335,11 +2772,13 @@ class MainWindow(FluentWindow):
                     audio_array = pcm16_data.astype(np.float32) / 32768.0
 
                     rms = np.sqrt(np.mean(audio_array**2))
-                    if rms > 0.008:
+                    if rms > 0.003:
                         self.speaker_activity[sender_name] = time.time()
 
                     is_me = (sender_name == self.state["user"])
-                    user_vol = 1.0 if is_me else self.peer_volumes.get(sender_name, 1.0)
+                    
+                    peer_cfg = self.cfg["peer_settings"].get(sender_name, {"vol": 1.0, "ducking": 0})
+                    user_vol = 1.0 if is_me else peer_cfg.get("vol", 1.0)
                     if user_vol != 1.0:
                         audio_array = audio_array * user_vol
 
@@ -2349,7 +2788,7 @@ class MainWindow(FluentWindow):
                     with self.audio_lock:
                         if sender_name not in self.incoming_audio_queue:
                             self.incoming_audio_queue[sender_name] = []
-                        if len(self.incoming_audio_queue[sender_name]) < 4:
+                        if len(self.incoming_audio_queue[sender_name]) < 8:
                             self.incoming_audio_queue[sender_name].append(audio_array)
 
         except websockets.exceptions.ConnectionClosed:
@@ -2367,8 +2806,8 @@ class MainWindow(FluentWindow):
                 async with websockets.connect(
                     current_target_url, 
                     open_timeout=45,
-                    ping_interval=20,
-                    ping_timeout=20,
+                    ping_interval=10,
+                    ping_timeout=10,
                     max_size=10*1024*1024
                 ) as ws:
                     self.ws_client = ws
@@ -2376,7 +2815,13 @@ class MainWindow(FluentWindow):
                     
                     self.send_ping_request()
 
-                    if self.state["in_room"] and self.state["room"]:
+                    res_room = self.cfg.get("pinned_room")
+                    if res_room and not self.state["in_room"]:
+                        self.send_json_msg({
+                            "type": "CHECK_ROOM",
+                            "room": res_room
+                        })
+                    elif self.state["in_room"] and self.state["room"]:
                         join_req = json.dumps({
                             "type": "JOIN",
                             "room": self.state["room"],
@@ -2384,9 +2829,12 @@ class MainWindow(FluentWindow):
                             "password": self.state.get("password", ""),
                             "mic_muted": self.state["mic_muted"],
                             "deafened": self.state["deafened"],
-                            "self_listen": self.state["self_listen"]
+                            "self_listen": self.state["self_listen"],
+                            "reserve": (res_room == self.state["room"])
                         })
                         await ws.send(join_req)
+
+                    self.room_interface.check_room_status()
 
                     await asyncio.gather(
                         self._sender_task(ws),
@@ -2441,7 +2889,7 @@ class MainWindow(FluentWindow):
 
         return signal
 
-    def audio_callback(self, indata, outdata, frames, time_info, status):
+    def mic_audio_callback(self, indata, frames, time_info, status):
         raw_mic = indata[:, 0]
         processed_mic = self.process_microphone(raw_mic)
 
@@ -2449,10 +2897,10 @@ class MainWindow(FluentWindow):
         vad_gate = float(self.cfg.get("vad_threshold", 0.0))
         
         if vad_gate <= 0.001:
-            is_speaking = (rms > 0.004) and (not self.state["mic_muted"])
+            is_speaking = (rms > 0.0015) and (not self.state["mic_muted"])
         else:
             if rms > vad_gate and not self.state["mic_muted"]:
-                self.vad_hold_counter = 9
+                self.vad_hold_counter = 12
             elif self.vad_hold_counter > 0:
                 self.vad_hold_counter -= 1
             
@@ -2475,13 +2923,37 @@ class MainWindow(FluentWindow):
                 except Exception:
                     pass
 
+    def spk_audio_callback(self, outdata, frames, time_info, status):
         mixed_audio = np.zeros(frames, dtype=np.float32)
 
+        # 1. Голоса участников из комнаты
         if not self.state["deafened"]:
+            now = time.time()
+            active_ducking_factor = 1.0
+            
+            for u in self.user_order:
+                if u != self.state["user"] and (now - self.speaker_activity.get(u, 0)) < 0.35:
+                    duck_val = self.cfg["peer_settings"].get(u, {}).get("ducking", 0)
+                    if duck_val > 0:
+                        active_ducking_factor = max(0.25, 1.0 - (duck_val / 100.0))
+                        break
+
             with self.audio_lock:
                 for sender, chunks in list(self.incoming_audio_queue.items()):
                     if chunks:
                         chunk = chunks.pop(0)
+                        
+                        is_higher = False
+                        for u in self.user_order:
+                            if u == sender:
+                                break
+                            if (now - self.speaker_activity.get(u, 0)) < 0.35 and self.cfg["peer_settings"].get(u, {}).get("ducking", 0) > 0:
+                                is_higher = True
+                                break
+
+                        factor = active_ducking_factor if is_higher else 1.0
+                        chunk = chunk * factor
+
                         if len(chunk) == frames:
                             mixed_audio += chunk
                         elif len(chunk) > frames:
@@ -2489,43 +2961,102 @@ class MainWindow(FluentWindow):
                         else:
                             mixed_audio[:len(chunk)] += chunk
 
+        # 2. Прямое подмешивание твоего саундпада в наушники
+        with self.audio_lock:
+            for track in list(self.local_soundpad_active_tracks):
+                if track:
+                    sp_chunk = track.pop(0)
+                    if len(sp_chunk) == frames:
+                        mixed_audio += sp_chunk
+                    elif len(sp_chunk) > frames:
+                        mixed_audio += sp_chunk[:frames]
+                    else:
+                        mixed_audio[:len(sp_chunk)] += sp_chunk
+                else:
+                    self.local_soundpad_active_tracks.remove(track)
+
         mixed_audio = np.clip(mixed_audio, -1.0, 1.0)
         self.last_played_audio_sample = mixed_audio.copy()
         outdata[:, 0] = mixed_audio
 
     def start_audio_stream(self):
         with self.stream_lock:
-            if self.audio_stream is not None:
+            if self.input_stream is not None:
                 try:
-                    self.audio_stream.stop()
-                    self.audio_stream.close()
+                    self.input_stream.stop()
+                    self.input_stream.close()
                 except Exception:
                     pass
-                self.audio_stream = None
+                self.input_stream = None
+
+            if self.output_stream is not None:
+                try:
+                    self.output_stream.stop()
+                    self.output_stream.close()
+                except Exception:
+                    pass
+                self.output_stream = None
+
+            in_idx = None
+            out_idx = None
+            for d in self.in_devs:
+                if d["name"] == self.cfg.get("mic_device"):
+                    in_idx = d["index"]
+                    break
+            for d in self.out_devs:
+                if d["name"] == self.cfg.get("speaker_device"):
+                    out_idx = d["index"]
+                    break
 
             try:
-                in_idx = None
-                out_idx = None
-                for d in self.in_devs:
-                    if d["name"] == self.cfg.get("mic_device"):
-                        in_idx = d["index"]
-                        break
-                for d in self.out_devs:
-                    if d["name"] == self.cfg.get("speaker_device"):
-                        out_idx = d["index"]
-                        break
-
-                self.audio_stream = sd.Stream(
-                    device=(in_idx, out_idx),
+                self.input_stream = sd.InputStream(
+                    device=in_idx,
                     channels=1,
                     samplerate=SAMPLE_RATE,
                     blocksize=BLOCK_SIZE,
-                    callback=self.audio_callback
+                    callback=self.mic_audio_callback
                 )
-                self.audio_stream.start()
-                self.log(f"[Audio Engine] Audio stream active ({SAMPLE_RATE} Hz).")
+                self.input_stream.start()
+                self.log(f"[Audio In] Microphone active ({SAMPLE_RATE} Hz).")
             except Exception as e:
-                self.log(f"[Audio Error] Stream start failed: {e}")
+                self.log(f"[Audio In Fallback] Re-trying default mic: {e}")
+                try:
+                    self.input_stream = sd.InputStream(
+                        device=None,
+                        channels=1,
+                        samplerate=SAMPLE_RATE,
+                        blocksize=BLOCK_SIZE,
+                        callback=self.mic_audio_callback
+                    )
+                    self.input_stream.start()
+                    self.log("[Audio In] Default Microphone active.")
+                except Exception as ex_in:
+                    self.log(f"[Audio In Critical] {ex_in}")
+
+            try:
+                self.output_stream = sd.OutputStream(
+                    device=out_idx,
+                    channels=1,
+                    samplerate=SAMPLE_RATE,
+                    blocksize=BLOCK_SIZE,
+                    callback=self.spk_audio_callback
+                )
+                self.output_stream.start()
+                self.log(f"[Audio Out] Speakers active ({SAMPLE_RATE} Hz).")
+            except Exception as e:
+                self.log(f"[Audio Out Fallback] Re-trying default speakers: {e}")
+                try:
+                    self.output_stream = sd.OutputStream(
+                        device=None,
+                        channels=1,
+                        samplerate=SAMPLE_RATE,
+                        blocksize=BLOCK_SIZE,
+                        callback=self.spk_audio_callback
+                    )
+                    self.output_stream.start()
+                    self.log("[Audio Out] Default Speakers active.")
+                except Exception as ex_out:
+                    self.log(f"[Audio Out Critical] {ex_out}")
 
     def init_audio_engine(self):
         self.start_audio_stream()
@@ -2546,4 +3077,12 @@ if __name__ == "__main__":
 
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    
+    exit_code = app.exec()
+    
+    try:
+        ctypes.windll.winmm.timeEndPeriod(1)
+    except Exception:
+        pass
+        
+    sys.exit(exit_code)
