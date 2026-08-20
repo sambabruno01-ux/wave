@@ -22,7 +22,7 @@ except Exception:
     pass
 
 try:
-    myappid = 'yunscryy.wave.voiceclient.1.4.9'
+    myappid = 'yunscryy.wave.voiceclient.1.5.0'
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception:
     pass
@@ -68,8 +68,8 @@ ASSETS_DIR = os.path.join(BUNDLE_DIR, "assets")
 ICON_PATH_ICO = os.path.join(ASSETS_DIR, "icon.ico")
 ICON_PATH_PNG = os.path.join(ASSETS_DIR, "icon.png")
 
-SAMPLE_RATE = 16000
-BLOCK_SIZE = 640
+SAMPLE_RATE = 48000
+BLOCK_SIZE = 1920
 
 EQ_PRESETS = {
     "eq_flat": (1.0, 1.0, 1.0),
@@ -346,6 +346,8 @@ def load_config():
         "pinned_pwd": "",
         "soundpad_tx_vol": 1.0,
         "soundpad_local_vol": 1.0,
+        "soundpad_duck_tx_pct": 50,
+        "soundpad_duck_local_pct": 50,
         "peer_settings": {}
     }
     if os.path.exists(CONFIG_PATH):
@@ -741,8 +743,15 @@ class VoiceOverlay(QWidget):
             r_layout.addWidget(name_lbl, 1)
 
             ping_val = udata.get("ping", 0) if isinstance(udata, dict) else 0
-            p_color = "#4CAF50" if ping_val < 90 else ("#FFA000" if ping_val < 180 else "#F44336")
-            p_txt = f"{ping_val}ms" if ping_val > 0 else "--ms"
+            if is_me:
+                ping_val = self.main_window.current_ping
+
+            if ping_val > 0:
+                p_color = "#4CAF50" if ping_val < 90 else ("#FFA000" if ping_val < 180 else "#F44336")
+                p_txt = f"{ping_val}ms"
+            else:
+                p_color = "#F44336"
+                p_txt = "... ms"
 
             ping_lbl = QLabel(p_txt, card)
             ping_lbl.setProperty("class", "PingLabel")
@@ -805,10 +814,15 @@ class VoiceOverlay(QWidget):
     def update_ping(self, user, ping_ms):
         if user in self.cards:
             _, dot, ping_lbl, _, _, _ = self.cards[user]
-            p_color = "#4CAF50" if ping_ms < 90 else ("#FFA000" if ping_ms < 180 else "#F44336")
+            if ping_ms > 0:
+                p_color = "#4CAF50" if ping_ms < 90 else ("#FFA000" if ping_ms < 180 else "#F44336")
+                p_txt = f"{ping_ms}ms"
+            else:
+                p_color = "#F44336"
+                p_txt = "... ms"
             dot.setStyleSheet(f"color: {p_color}; font-size: {self.cur_dot_size}px;")
             ping_lbl.setStyleSheet(f"color: {p_color};")
-            ping_lbl.setText(f"{ping_ms}ms")
+            ping_lbl.setText(p_txt)
 
     def update_controls_status(self):
         mic_off = self.main_window.state.get("mic_muted", False)
@@ -1315,14 +1329,19 @@ class RoomInterface(QWidget):
             l = QHBoxLayout(card)
             l.setContentsMargins(10, 6, 10, 6)
             
-            ping_val = udata.get("ping", 0)
-            p_color = "#4CAF50" if ping_val < 90 else ("#FFA000" if ping_val < 180 else "#F44336")
+            ping_val = udata.get("ping", 0) if isinstance(udata, dict) else 0
+            if ping_val > 0:
+                p_color = "#4CAF50" if ping_val < 90 else ("#FFA000" if ping_val < 180 else "#F44336")
+                p_txt = f"{ping_val}ms"
+            else:
+                p_color = "#F44336"
+                p_txt = "... ms"
             
             dot = CaptionLabel("●", card)
             dot.setStyleSheet(f"color: {p_color};")
             l.addWidget(dot)
             
-            p_lbl = CaptionLabel(f"{ping_val}ms" if ping_val > 0 else "--ms", card)
+            p_lbl = CaptionLabel(p_txt, card)
             p_lbl.setStyleSheet(f"color: {p_color}; font-weight: bold;")
             l.addWidget(p_lbl)
 
@@ -1483,13 +1502,20 @@ class RoomInterface(QWidget):
                 uc_layout.addSpacing(6)
 
             ping_val = udata.get("ping", 0) if isinstance(udata, dict) else 0
-            p_color = "#4CAF50" if ping_val < 90 else ("#FFA000" if ping_val < 180 else "#F44336")
+            if is_me:
+                ping_val = self.main_window.current_ping
+
+            if ping_val > 0:
+                p_color = "#4CAF50" if ping_val < 90 else ("#FFA000" if ping_val < 180 else "#F44336")
+                p_txt = f"{ping_val}ms"
+            else:
+                p_color = "#F44336"
+                p_txt = "... ms"
             
             dot = CaptionLabel("●", user_card)
             dot.setStyleSheet(f"color: {p_color}; font-size: 13px;")
             uc_layout.addWidget(dot)
 
-            p_txt = f"{ping_val}ms" if ping_val > 0 else (f"{self.main_window.current_ping}ms" if is_me and self.main_window.current_ping > 0 else "--ms")
             ping_lbl = CaptionLabel(p_txt, user_card)
             ping_lbl.setStyleSheet(f"color: {p_color}; font-weight: bold; font-size: 11px;")
             uc_layout.addWidget(ping_lbl)
@@ -1540,9 +1566,14 @@ class RoomInterface(QWidget):
     def update_user_ping_ui(self, user, ping_ms):
         if user in self.user_ping_labels:
             dot, lbl = self.user_ping_labels[user]
-            color = "#4CAF50" if ping_ms < 90 else ("#FFA000" if ping_ms < 180 else "#F44336")
+            if ping_ms > 0:
+                color = "#4CAF50" if ping_ms < 90 else ("#FFA000" if ping_ms < 180 else "#F44336")
+                p_txt = f"{ping_ms}ms"
+            else:
+                color = "#F44336"
+                p_txt = "... ms"
             dot.setStyleSheet(f"color: {color}; font-size: 13px;")
-            lbl.setText(f"{ping_ms}ms")
+            lbl.setText(p_txt)
             lbl.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px;")
 
     def leave_or_sleep_room(self):
@@ -1600,7 +1631,6 @@ class SoundpadInterface(QWidget):
         self.layout.setContentsMargins(32, 24, 32, 24)
         self.layout.setSpacing(14)
         
-        self.current_playback_id = 0
         self.sounds = load_soundpad()
         self.init_ui()
 
@@ -1615,11 +1645,12 @@ class SoundpadInterface(QWidget):
         top.addWidget(add_btn)
         self.layout.addLayout(top)
 
-        # 1. Панель настроек громкости
+        # 1. Панель основных громкостей
         vol_card = SimpleCardWidget(self)
         v_layout = QVBoxLayout(vol_card)
         v_layout.setContentsMargins(18, 14, 18, 14)
         v_layout.setSpacing(12)
+        v_layout.addWidget(StrongBodyLabel(self.main_window.tr("soundpad_main_vol_group"), vol_card))
 
         tx_row = QHBoxLayout()
         tx_row.addWidget(BodyLabel(self.main_window.tr("soundpad_tx_vol"), vol_card))
@@ -1645,7 +1676,38 @@ class SoundpadInterface(QWidget):
 
         self.layout.addWidget(vol_card)
 
-        # 2. Панель опций остановки и прерывания
+        # 2. Панель автозаглушения при речи (Ducking)
+        duck_card = SimpleCardWidget(self)
+        d_layout = QVBoxLayout(duck_card)
+        d_layout.setContentsMargins(18, 14, 18, 14)
+        d_layout.setSpacing(12)
+        d_layout.addWidget(StrongBodyLabel(self.main_window.tr("soundpad_duck_group"), duck_card))
+
+        duck_tx_row = QHBoxLayout()
+        duck_tx_row.addWidget(BodyLabel(self.main_window.tr("soundpad_duck_tx"), duck_card))
+        self.duck_tx_lbl = CaptionLabel(f"{int(self.main_window.cfg.get('soundpad_duck_tx_pct', 50))}%", duck_card)
+        self.duck_tx_slider = Slider(Qt.Orientation.Horizontal, duck_card)
+        self.duck_tx_slider.setRange(0, 100)
+        self.duck_tx_slider.setValue(int(self.main_window.cfg.get("soundpad_duck_tx_pct", 50)))
+        self.duck_tx_slider.valueChanged.connect(self.on_duck_tx_changed)
+        duck_tx_row.addWidget(self.duck_tx_slider)
+        duck_tx_row.addWidget(self.duck_tx_lbl)
+        d_layout.addLayout(duck_tx_row)
+
+        duck_loc_row = QHBoxLayout()
+        duck_loc_row.addWidget(BodyLabel(self.main_window.tr("soundpad_duck_local"), duck_card))
+        self.duck_loc_lbl = CaptionLabel(f"{int(self.main_window.cfg.get('soundpad_duck_local_pct', 50))}%", duck_card)
+        self.duck_loc_slider = Slider(Qt.Orientation.Horizontal, duck_card)
+        self.duck_loc_slider.setRange(0, 100)
+        self.duck_loc_slider.setValue(int(self.main_window.cfg.get("soundpad_duck_local_pct", 50)))
+        self.duck_loc_slider.valueChanged.connect(self.on_duck_local_changed)
+        duck_loc_row.addWidget(self.duck_loc_slider)
+        duck_loc_row.addWidget(self.duck_loc_lbl)
+        d_layout.addLayout(duck_loc_row)
+
+        self.layout.addWidget(duck_card)
+
+        # 3. Панель опций остановки и прерывания
         opt_card = SimpleCardWidget(self)
         opt_l = QVBoxLayout(opt_card)
         opt_l.setContentsMargins(18, 12, 18, 12)
@@ -1678,7 +1740,7 @@ class SoundpadInterface(QWidget):
 
         self.layout.addWidget(opt_card)
 
-        # 3. Список звуков
+        # 4. Список звуков
         self.scroll = ScrollArea(self)
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1705,6 +1767,16 @@ class SoundpadInterface(QWidget):
         self.main_window.cfg["soundpad_local_vol"] = v / 100.0
         save_config(self.main_window.cfg)
 
+    def on_duck_tx_changed(self, v):
+        self.duck_tx_lbl.setText(f"{v}%")
+        self.main_window.cfg["soundpad_duck_tx_pct"] = v
+        save_config(self.main_window.cfg)
+
+    def on_duck_local_changed(self, v):
+        self.duck_loc_lbl.setText(f"{v}%")
+        self.main_window.cfg["soundpad_duck_local_pct"] = v
+        save_config(self.main_window.cfg)
+
     def on_stop_hotkey_changed(self, combo):
         self.main_window.cfg["bind_soundpad_stop"] = combo
         save_config(self.main_window.cfg)
@@ -1715,9 +1787,9 @@ class SoundpadInterface(QWidget):
         save_config(self.main_window.cfg)
 
     def stop_all_sounds(self):
-        self.current_playback_id += 1
         with self.main_window.audio_lock:
-            self.main_window.local_soundpad_active_tracks.clear()
+            self.main_window.soundpad_tx_tracks.clear()
+            self.main_window.soundpad_local_tracks.clear()
 
     def refresh_list(self):
         while self.cards_layout.count() > 1:
@@ -1788,66 +1860,30 @@ class SoundpadInterface(QWidget):
     def play_sound(self, cached_wav_path):
         if not cached_wav_path or not os.path.exists(cached_wav_path):
             return
-        
-        if self.main_window.cfg.get("soundpad_interrupt", True):
-            self.stop_all_sounds()
 
-        self.current_playback_id += 1
-        play_id = self.current_playback_id
-        
-        def _streamer():
-            try:
-                pcm_arr = read_pcm_from_cached_wav(cached_wav_path)
-                if pcm_arr is None:
-                    return
+        def _loader():
+            pcm_arr = read_pcm_from_cached_wav(cached_wav_path)
+            if pcm_arr is None:
+                return
 
-                tx_vol = float(self.main_window.cfg.get("soundpad_tx_vol", 1.0))
-                local_vol = float(self.main_window.cfg.get("soundpad_local_vol", 1.0))
+            chunks_tx = []
+            chunks_local = []
+            for j in range(0, len(pcm_arr), BLOCK_SIZE):
+                c = pcm_arr[j:j+BLOCK_SIZE]
+                if len(c) < BLOCK_SIZE:
+                    c = np.pad(c, (0, BLOCK_SIZE - len(c)))
+                chunks_tx.append(c.copy())
+                chunks_local.append(c.copy())
 
-                tx_pcm = pcm_arr * tx_vol
-                loc_pcm = pcm_arr * local_vol
+            with self.main_window.audio_lock:
+                if self.main_window.cfg.get("soundpad_interrupt", True):
+                    self.main_window.soundpad_tx_tracks = [chunks_tx]
+                    self.main_window.soundpad_local_tracks = [chunks_local]
+                else:
+                    self.main_window.soundpad_tx_tracks.append(chunks_tx)
+                    self.main_window.soundpad_local_tracks.append(chunks_local)
 
-                # 1. Загрузка в прямой локальный PortAudio / SoundDevice буфер
-                chunks_to_add = []
-                for j in range(0, len(loc_pcm), BLOCK_SIZE):
-                    c = loc_pcm[j:j+BLOCK_SIZE]
-                    if len(c) < BLOCK_SIZE:
-                        c = np.pad(c, (0, BLOCK_SIZE - len(c)))
-                    chunks_to_add.append(c)
-
-                with self.main_window.audio_lock:
-                    if self.main_window.cfg.get("soundpad_interrupt", True):
-                        self.main_window.local_soundpad_active_tracks = [chunks_to_add]
-                    else:
-                        self.main_window.local_soundpad_active_tracks.append(chunks_to_add)
-
-                # 2. Сетевая отправка PCM чанками на сервер
-                if self.main_window.state["in_room"]:
-                    u_bytes = self.main_window.state["user"].encode('utf-8')
-                    header = bytearray([2, len(u_bytes)]) + u_bytes
-
-                    for i in range(0, len(tx_pcm), BLOCK_SIZE):
-                        if play_id != self.current_playback_id:
-                            break
-
-                        chunk = tx_pcm[i:i+BLOCK_SIZE]
-                        if len(chunk) < BLOCK_SIZE:
-                            chunk = np.pad(chunk, (0, BLOCK_SIZE - len(chunk)))
-                        
-                        self.main_window.speaker_activity[self.main_window.state["user"]] = time.time() + 0.35
-
-                        clipped = np.clip(chunk, -1.0, 1.0)
-                        pcm16 = (clipped * 32767).astype(np.int16)
-                        packet = bytes(header + pcm16.tobytes())
-                        
-                        if self.main_window.ws_loop and self.main_window.ws_loop.is_running():
-                            self.main_window.ws_loop.call_soon_threadsafe(self.main_window.out_queue.put_nowait, packet)
-                        
-                        time.sleep(BLOCK_SIZE / SAMPLE_RATE)
-            except Exception as e:
-                self.main_window.log(f"[Soundpad Streamer] {e}")
-
-        threading.Thread(target=_streamer, daemon=True).start()
+        threading.Thread(target=_loader, daemon=True).start()
 
 class SettingsInterface(QWidget):
     def __init__(self, main_window):
@@ -2394,18 +2430,26 @@ class MainWindow(FluentWindow):
         self.ws_loop = None
         self.out_queue = None
         self.ping_start_time = 0
+        self.last_pong_time = time.time()
         self.current_ping = 0
         self.user_order = []
         self.last_received_users = {}
         
         self.incoming_audio_queue = {}
-        self.local_soundpad_active_tracks = []
+        self.soundpad_tx_tracks = []
+        self.soundpad_local_tracks = []
         self.speaker_activity = {}
         self.speaker_glow_levels = {}
         self.last_played_audio_sample = np.zeros(BLOCK_SIZE, dtype=np.float32)
         self.noise_profile = 0.005
         self.agc_gain = 1.0
+        
+        # Точные тайминги удержания и сглаживания
         self.vad_hold_counter = 0
+        self.duck_hold_counter = 0
+        self.duck_tx_smooth = 1.0
+        self.duck_loc_smooth = 1.0
+        self.is_self_speaking = False
         self.audio_lock = threading.Lock()
 
         self.input_stream = None
@@ -2616,7 +2660,7 @@ class MainWindow(FluentWindow):
                                     c = np.pad(c, (0, BLOCK_SIZE - len(c)))
                                 chunks.append(c * 0.8)
                             with self.audio_lock:
-                                self.local_soundpad_active_tracks.append(chunks)
+                                self.soundpad_local_tracks.append(chunks)
                 except Exception:
                     pass
 
@@ -2658,25 +2702,27 @@ class MainWindow(FluentWindow):
 
         for user in active_users:
             last_t = self.speaker_activity.get(user, 0)
-            
-            if user == self.state["user"] and self.state["mic_muted"]:
-                is_active = False
-            else:
-                is_active = (now - last_t) < 0.35
+            is_active = (now < last_t)
 
             target = 1.0 if is_active else 0.0
             cur = self.speaker_glow_levels.get(user, 0.0)
 
             if cur < target:
-                cur = min(1.0, cur + 0.08)
+                cur = min(1.0, cur + 0.12)
             elif cur > target:
-                cur = max(0.0, cur - 0.04)
+                cur = max(0.0, cur - 0.05)
 
             if abs(cur - self.speaker_glow_levels.get(user, -1.0)) > 0.005:
                 self.speaker_glow_levels[user] = cur
                 self.smooth_glow_signal.emit(user, cur)
 
     def send_ping_request(self):
+        now = time.time()
+        if (now - self.last_pong_time) > 7.0:
+            self.current_ping = 0
+            u_name = self.state["user"]
+            self.user_ping_signal.emit(u_name, 0)
+
         if self.ws_client:
             self.ping_start_time = time.time()
             self.send_json_msg({
@@ -2747,6 +2793,7 @@ class MainWindow(FluentWindow):
                             self.update_users_signal.emit(users)
 
                         elif mtype == "PONG":
+                            self.last_pong_time = time.time()
                             if self.ping_start_time > 0:
                                 rtt = int((time.time() - self.ping_start_time) * 1000)
                                 self.current_ping = rtt
@@ -2772,11 +2819,15 @@ class MainWindow(FluentWindow):
                     audio_array = pcm16_data.astype(np.float32) / 32768.0
 
                     rms = np.sqrt(np.mean(audio_array**2))
-                    if rms > 0.003:
-                        self.speaker_activity[sender_name] = time.time()
+                    if rms > 0.002:
+                        self.speaker_activity[sender_name] = time.time() + 0.35
 
                     is_me = (sender_name == self.state["user"])
                     
+                    # Свой собственный голос/саундпад из сети отбрасываем (если не включен режим self_listen)
+                    if is_me and not self.state["self_listen"]:
+                        continue
+
                     peer_cfg = self.cfg["peer_settings"].get(sender_name, {"vol": 1.0, "ducking": 0})
                     user_vol = 1.0 if is_me else peer_cfg.get("vol", 1.0)
                     if user_vol != 1.0:
@@ -2843,6 +2894,8 @@ class MainWindow(FluentWindow):
 
             except Exception as e:
                 self.ws_client = None
+                self.current_ping = 0
+                self.user_ping_signal.emit(self.state["user"], 0)
                 self.log(f"[Server Reconnect] Retry in 3s: {e}")
                 await asyncio.sleep(3)
 
@@ -2896,21 +2949,66 @@ class MainWindow(FluentWindow):
         rms = np.sqrt(np.mean(processed_mic**2))
         vad_gate = float(self.cfg.get("vad_threshold", 0.0))
         
+        # VAD Engine: Hold = 18 фреймов (~720 мс)
         if vad_gate <= 0.001:
-            is_speaking = (rms > 0.0015) and (not self.state["mic_muted"])
+            raw_speaking = (rms > 0.0015) and (not self.state["mic_muted"])
         else:
-            if rms > vad_gate and not self.state["mic_muted"]:
-                self.vad_hold_counter = 12
-            elif self.vad_hold_counter > 0:
+            raw_speaking = (rms > vad_gate) and (not self.state["mic_muted"])
+
+        if raw_speaking:
+            self.vad_hold_counter = 18
+            self.duck_hold_counter = 12  # Hold 1 секунда
+        else:
+            if self.vad_hold_counter > 0:
                 self.vad_hold_counter -= 1
-            
-            is_speaking = (self.vad_hold_counter > 0) and (not self.state["mic_muted"])
+            if self.duck_hold_counter > 0:
+                self.duck_hold_counter -= 1
+        
+        is_speaking = (self.vad_hold_counter > 0) and (not self.state["mic_muted"])
+        is_ducking_active = (self.duck_hold_counter > 0) and (not self.state["mic_muted"])
 
+        self.is_self_speaking = is_speaking
+
+        # Sidechain Ducking Envelope (Attack ~90ms, Release ~600ms)
+        target_duck_tx = (1.0 - float(self.cfg.get("soundpad_duck_tx_pct", 50)) / 100.0) if is_ducking_active else 1.0
+        if self.duck_tx_smooth > target_duck_tx:
+            self.duck_tx_smooth = max(target_duck_tx, self.duck_tx_smooth - 0.40)
+        elif self.duck_tx_smooth < target_duck_tx:
+            self.duck_tx_smooth = min(target_duck_tx, self.duck_tx_smooth + 0.06)
+
+        # Вытаскиваем чанк ТОЛЬКО из очереди передачи
+        sp_sum_chunk = np.zeros(frames, dtype=np.float32)
+        has_sp = False
+        with self.audio_lock:
+            for track in list(self.soundpad_tx_tracks):
+                if track:
+                    chunk = track.pop(0)
+                    if len(chunk) == frames:
+                        sp_sum_chunk += chunk
+                    elif len(chunk) > frames:
+                        sp_sum_chunk += chunk[:frames]
+                    else:
+                        sp_sum_chunk[:len(chunk)] += chunk
+                    has_sp = True
+                else:
+                    self.soundpad_tx_tracks.remove(track)
+
+        tx_vol = float(self.cfg.get("soundpad_tx_vol", 1.0)) * self.duck_tx_smooth
+        sp_sum_chunk *= tx_vol
+
+        mixed_tx = np.zeros(frames, dtype=np.float32)
         if is_speaking:
-            self.speaker_activity[self.state["user"]] = time.time()
+            mixed_tx += processed_mic
+        if has_sp:
+            mixed_tx += sp_sum_chunk
 
-        if self.state["in_room"] and self.out_queue and is_speaking:
-            clipped = np.clip(processed_mic, -1.0, 1.0)
+        # Честный замер суммарной энергии в эфир для подсветки самого себя
+        out_rms = np.sqrt(np.mean(mixed_tx**2))
+        if out_rms > 0.002:
+            self.speaker_activity[self.state["user"]] = time.time() + 0.35
+
+        if self.state["in_room"] and self.out_queue and (is_speaking or has_sp):
+            clipped = np.clip(mixed_tx, -1.0, 1.0)
             pcm16_data = (clipped * 32767).astype(np.int16)
 
             u_bytes = self.state["user"].encode('utf-8')
@@ -2926,13 +3024,13 @@ class MainWindow(FluentWindow):
     def spk_audio_callback(self, outdata, frames, time_info, status):
         mixed_audio = np.zeros(frames, dtype=np.float32)
 
-        # 1. Голоса участников из комнаты
+        # 1. Голоса других участников
         if not self.state["deafened"]:
             now = time.time()
             active_ducking_factor = 1.0
             
             for u in self.user_order:
-                if u != self.state["user"] and (now - self.speaker_activity.get(u, 0)) < 0.35:
+                if u != self.state["user"] and now < self.speaker_activity.get(u, 0):
                     duck_val = self.cfg["peer_settings"].get(u, {}).get("ducking", 0)
                     if duck_val > 0:
                         active_ducking_factor = max(0.25, 1.0 - (duck_val / 100.0))
@@ -2947,7 +3045,7 @@ class MainWindow(FluentWindow):
                         for u in self.user_order:
                             if u == sender:
                                 break
-                            if (now - self.speaker_activity.get(u, 0)) < 0.35 and self.cfg["peer_settings"].get(u, {}).get("ducking", 0) > 0:
+                            if now < self.speaker_activity.get(u, 0) and self.cfg["peer_settings"].get(u, {}).get("ducking", 0) > 0:
                                 is_higher = True
                                 break
 
@@ -2961,19 +3059,30 @@ class MainWindow(FluentWindow):
                         else:
                             mixed_audio[:len(chunk)] += chunk
 
-        # 2. Прямое подмешивание твоего саундпада в наушники
+        # 2. Локальный вывод саундпада из СВОЕЙ локальной очереди
+        target_duck_loc = (1.0 - float(self.cfg.get("soundpad_duck_local_pct", 50)) / 100.0) if self.duck_hold_counter > 0 and (not self.state["mic_muted"]) else 1.0
+        if self.duck_loc_smooth > target_duck_loc:
+            self.duck_loc_smooth = max(target_duck_loc, self.duck_loc_smooth - 0.40)
+        elif self.duck_loc_smooth < target_duck_loc:
+            self.duck_loc_smooth = min(target_duck_loc, self.duck_loc_smooth + 0.06)
+
+        sp_local_chunk = np.zeros(frames, dtype=np.float32)
         with self.audio_lock:
-            for track in list(self.local_soundpad_active_tracks):
+            for track in list(self.soundpad_local_tracks):
                 if track:
-                    sp_chunk = track.pop(0)
-                    if len(sp_chunk) == frames:
-                        mixed_audio += sp_chunk
-                    elif len(sp_chunk) > frames:
-                        mixed_audio += sp_chunk[:frames]
+                    c = track.pop(0)
+                    if len(c) == frames:
+                        sp_local_chunk += c
+                    elif len(c) > frames:
+                        sp_local_chunk += c[:frames]
                     else:
-                        mixed_audio[:len(sp_chunk)] += sp_chunk
+                        sp_local_chunk[:len(c)] += c
                 else:
-                    self.local_soundpad_active_tracks.remove(track)
+                    self.soundpad_local_tracks.remove(track)
+
+        loc_vol = float(self.cfg.get("soundpad_local_vol", 1.0)) * self.duck_loc_smooth
+        sp_local_chunk *= loc_vol
+        mixed_audio += sp_local_chunk
 
         mixed_audio = np.clip(mixed_audio, -1.0, 1.0)
         self.last_played_audio_sample = mixed_audio.copy()

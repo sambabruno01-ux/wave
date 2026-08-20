@@ -43,7 +43,6 @@ async def schedule_room_cleanup(room_id, delay=INACTIVITY_TIMEOUT):
     await asyncio.sleep(delay)
     if room_id in ROOMS:
         if ROOMS[room_id].get("reserved", False):
-            # Проверяем 7-дневный таймер
             if time.time() >= ROOMS[room_id].get("expire_at", 0):
                 del ROOMS[room_id]
                 print(f"[x] Reserved room {room_id} expired after 7 days of inactivity.")

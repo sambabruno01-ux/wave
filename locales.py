@@ -53,8 +53,12 @@ TRANSLATIONS = {
         
         # Soundpad Interface
         "soundpad_title": "Саундпад",
-        "soundpad_tx_vol": "Громкость в эфир:",
-        "soundpad_local_vol": "Громкость у себя:",
+        "soundpad_main_vol_group": "Громкость саундпада:",
+        "soundpad_tx_vol": "В эфир:",
+        "soundpad_local_vol": "У себя:",
+        "soundpad_duck_group": "Автозаглушение при речи:",
+        "soundpad_duck_tx": "В эфире:",
+        "soundpad_duck_local": "У себя:",
         "soundpad_stop_hotkey": "Клавиша остановки звуков:",
         "soundpad_interrupt_switch": "Прерывать звук при запуске нового:",
         "btn_stop_sound": "Стоп",
@@ -139,17 +143,17 @@ TRANSLATIONS = {
 
         # Info Interface
         "info_title": "О программе",
-        "app_full_title": "Wave V1.4 Pro by yunscryy",
+        "app_full_title": "Wave V1.5 Pro by yunscryy",
         "app_desc": (
             "Минималистичный голосовой клиент прямого подключения с интерфейсом Windows 11 Fluent Design.\n\n"
             "Архитектура и стек технологий:\n"
             "• Среда выполнения: Python 3.14 x64\n"
             "• Графический интерфейс: PyQt6, QFluentWidgets (Fluent Design Win11)\n"
-            "• Аудио-движок: SoundDevice, NumPy (PCM16 16кГц, IIR DSP фильтры, VAD Engine, Soundpad Direct Stream)\n"
+            "• Аудио-движок: SoundDevice, NumPy (PCM16 48кГц Hi-Fi, IIR DSP фильтры, VAD Engine, Sidechain Auto-Ducking)\n"
             "• Сетевой транспорт: WebSockets (Дуплексный бинарный стриминг данных)\n"
             "• Системный уровень: Win32 API Hooking (User32 / Shell32)"
         ),
-        "app_version": "Версия: 1.4.8 Pro",
+        "app_version": "Версия: 1.5.0 Pro",
         "btn_github": "GitHub репозиторий"
     },
     "en": {
@@ -206,8 +210,12 @@ TRANSLATIONS = {
         
         # Soundpad Interface
         "soundpad_title": "Soundpad",
-        "soundpad_tx_vol": "Broadcast Volume:",
-        "soundpad_local_vol": "Local Volume:",
+        "soundpad_main_vol_group": "Soundpad Volume:",
+        "soundpad_tx_vol": "Broadcast:",
+        "soundpad_local_vol": "Local:",
+        "soundpad_duck_group": "Auto-Ducking on speech:",
+        "soundpad_duck_tx": "Broadcast:",
+        "soundpad_duck_local": "Local:",
         "soundpad_stop_hotkey": "Stop sounds hotkey:",
         "soundpad_interrupt_switch": "Interrupt previous sound on new play:",
         "btn_stop_sound": "Stop",
@@ -292,17 +300,17 @@ TRANSLATIONS = {
 
         # Info Interface
         "info_title": "About Wave",
-        "app_full_title": "Wave V1.4 Pro by yunscryy",
+        "app_full_title": "Wave V1.5 Pro by yunscryy",
         "app_desc": (
             "Windows 11 Fluent Design voice client.\n\n"
             "Architecture & Technology Stack:\n"
             "• Runtime Environment: Python 3.14 x64\n"
             "• UI Framework: PyQt6, QFluentWidgets (Fluent Design Win11)\n"
-            "• Audio DSP Engine: SoundDevice, NumPy (PCM16 16kHz, IIR DSP processing, VAD Engine, Soundpad Direct Stream)\n"
+            "• Audio DSP Engine: SoundDevice, NumPy (PCM16 48kHz Hi-Fi, IIR DSP processing, VAD Engine, Sidechain Auto-Ducking)\n"
             "• Transport: WebSockets (Full-duplex binary streaming)\n"
             "• System Level: Win32 API Hooking (User32 / Shell32)"
         ),
-        "app_version": "Version: 1.4.8 Pro",
+        "app_version": "Version: 1.5.0 Pro",
         "btn_github": "GitHub Repository"
     }
 }
